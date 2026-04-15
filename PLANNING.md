@@ -28,7 +28,7 @@ to give the new session full context.
 An iApps LX RPM package installed on BIG-IP that provides version control for
 iRules. Operators can snapshot, diff, deploy, and rollback iRules through a
 built-in GUI served inside BIG-IP TMUI. Versions are stored locally on the
-BIG-IP filesystem. A GitHub integration (Phase 4) allows pushing and pulling
+BIG-IP filesystem. A GitHub integration (Phase 5) allows pushing and pulling
 iRules to/from a remote repository, with support for both static iRules and
 per-device parameterised templates.
 
@@ -65,6 +65,7 @@ per-device parameterised templates.
 - No arrow functions `() => {}` — use `function() {}`
 - No template literals — use string concatenation
 - No `Object.assign`, `Promise`, `async`/`await`
+- No `0o` octal literals — use decimal: `0o600`→`384`, `0o644`→`420`, `0o755`→`493`
 - `fs.mkdir` does NOT support `{ recursive: true }` — falls back to
   `_mkdirpLegacy` which is already implemented in `versionStore.js`
 - `Buffer.from()` IS available in Node 6.9.1 ✅ (added in 5.10)
@@ -160,7 +161,7 @@ Rule names containing `/` are normalised to `_` for the directory name.
 Contains the raw TCL body only — no `ltm rule /P/N { }` wrapper. The wrapper
 is added by `tmsh.js` when constructing the staging file for deployment.
 
-### Template iRule format (GitHub — Phase 4)
+### Template iRule format (GitHub — Phase 5)
 
 iRules stored in GitHub as templates use `{{VARIABLE_NAME}}` substitution:
 
@@ -288,17 +289,17 @@ the existing BIG-IP admin session cookie — no separate credentials.
 | GET | `/settings` | 1 | Read all global settings (credentials masked) |
 | PUT | `/settings` | 1 | Update global settings |
 
-### GitHub worker (`/github`) — Phase 4
+### GitHub worker (`/github`) — Phase 5
 
 | Method | Path | Phase | Description |
 |--------|------|-------|-------------|
-| GET | `/github/status` | 4 | Connection status, auth method, last sync time |
-| POST | `/github/test` | 4 | Test GitHub connectivity and credentials |
-| GET | `/github/browse?repo=:repo&path=:path&branch=:branch` | 4 | Browse repo contents (file picker in GUI) |
-| POST | `/rules/:partition/:name/github/link` | 4 | Link rule to a GitHub file `{ repo, path, branch, type }` |
-| DELETE | `/rules/:partition/:name/github/link` | 4 | Unlink rule from GitHub |
-| POST | `/rules/:partition/:name/github/pull` | 4 | Pull from GitHub, render template if needed |
-| POST | `/rules/:partition/:name/github/push` | 4 | Push current live version to GitHub |
+| GET | `/github/status` | 5 | Connection status, auth method, last sync time |
+| POST | `/github/test` | 5 | Test GitHub connectivity and credentials |
+| GET | `/github/browse?repo=:repo&path=:path&branch=:branch` | 5 | Browse repo contents (file picker in GUI) |
+| POST | `/rules/:partition/:name/github/link` | 5 | Link rule to a GitHub file `{ repo, path, branch, type }` |
+| DELETE | `/rules/:partition/:name/github/link` | 5 | Unlink rule from GitHub |
+| POST | `/rules/:partition/:name/github/pull` | 5 | Pull from GitHub, render template if needed |
+| POST | `/rules/:partition/:name/github/push` | 5 | Push current live version to GitHub |
 
 ### Response shapes
 
@@ -421,7 +422,7 @@ config processor via `fetch()` calls to `/mgmt/shared/irule-versioner/`.
   7. Success: toast notification + history list refreshes + "current" badge moves
   8. Failure: error modal with tmsh error message
 
-#### Right panel — GitHub tab (Phase 4)
+#### Right panel — GitHub tab (Phase 5)
 
 - Link status: Linked / Unlinked / Diverged
 - If unlinked: "Link to GitHub" flow with repo browser (file picker)
@@ -500,7 +501,7 @@ URL access).
 
 ### Phase 1 — RPM scaffold + baseline snapshots ✅ COMPLETE (fully tested on real BIG-IP)
 
-**Status:** Implemented, unit tested (16/16 passing), and validated on BIG-IP TMOS 14.x.
+**Status:** Implemented, unit tested (16/16 passing), and validated on BIG-IP TMOS 14.x and 21.x.
 
 Deliverables completed:
 - Installable RPM skeleton (`manifest.json`, `block_template.json`)
@@ -573,38 +574,141 @@ Deliverables completed:
 
 - **`bigstart restart restnoded` is confirmed correct on TMOS 14.x.** ✅
 
-**Remaining open items for Phase 2+:**
+**Remaining open items for Phase 3+:**
 - Orphaned blob files (versions pruned by retention policy) not yet cleaned up —
   deferred to Phase 5.
-- `settings.js` `load()` not wired into startup — settings currently use
-  in-memory defaults only. Wire into `onStart` in Phase 2.
-- Deploy endpoint not yet tested on real device (Phase 2 — requires GUI confirm
-  flow to be useful in practice).
-- Poll worker interval is hardcoded to 300s in `_startPollWorker` — should read
-  from settings once settings persistence is wired up (Phase 2).
 
 ---
 
-### Phase 2 — Full-page GUI + history + deploy flow (2–3 weeks)
+### Phase 2 — Full-page GUI + history + deploy flow ✅ COMPLETE (fully tested on real BIG-IP TMOS 21.x)
+
+**Status:** Implemented and validated on BIG-IP TMOS 21.x, Node.js 6.9.1.
+
+Deliverables completed:
+- `presentation/app.html` — full-page master-detail SPA served via `uiWorker.js`
+- Left panel: searchable iRule list with flat/partition grouping toggle
+- Right panel: Overview tab with CodeMirror TCL viewer (syntax highlighting)
+- Right panel: History tab with version timeline, two-region split layout
+- Side-by-side diff viewer (line-level, colour-coded, context-collapsed)
+- History compare: select two versions with checkboxes, diff renders in-place
+- Draggable resize handle between version list and diff regions
+- Two-step deploy/rollback flow: diff modal + mandatory reason field
+- Confirm button disabled until reason is non-empty
+- PUT `/rules/:p/:n/retention` endpoint ✅
+- GET `/rules/audit` endpoint with pagination and rule filter ✅
+- Right panel: Audit tab (per-rule filtered view, paginated) ✅
+- In-GUI toast notifications (stacks to 3, 5s auto-dismiss) ✅
+- "Edit" button unlocking inline CodeMirror editor ✅
+- Save & Deploy from editor: sends buffer content, deploys + snapshots atomically ✅
+- CodeMirror inlined directly into `app.html` (no vendor/ requests) ✅
+- Deploy endpoint async: returns 202 + taskId, GUI polls for completion ✅
+- Per-rule deploy lock (in-memory Map) prevents concurrent deploys ✅
+- `settings.js` `load()` wired into `onStart` — settings persist across restarts ✅
+- Poll worker reads interval from persisted settings ✅
+- `uiWorker.js` — new worker serving static files via restnoded ✅
+- `build/bundle-codemirror.sh` — build-machine script for vendor bundle ✅
+- `test/test-external-change.sh` — validates external change detection end-to-end ✅
+
+**Lessons learned from real-device testing (TMOS 21.x):**
+
+- **Deploy write path: use iControl REST PATCH, not tmsh.** `tmsh load sys config
+  merge file` is not usable from the `restnoded` user (uid 198). The user cannot
+  acquire `/var/run/config_lock` and tmsh exits 1 even after a successful load
+  because it cannot write its history file to `~/.tmsh-history-root` (home is `//`).
+  Fix: `PATCH https://localhost/mgmt/tm/ltm/rule/~P~N { "apiAnonymous": content }`.
+  Same localhost:8100 trusted channel used for reads. No temp files, no child
+  processes, no permission issues. `tmsh.js` retained for future syslog use
+  (Phase 3) but is no longer in the deploy path. `bigipClient.js` now owns both
+  reads and writes.
+
+- **`0o600` is ES6 octal syntax — Node 6.9.1 silently treats it as `0`.** Any
+  `fs.writeFile` call with `mode: 0o600` writes a file with mode 0 (unreadable).
+  Use decimal `384` instead. Added to Node 6 constraints list.
+
+- **`restOperation.setContentType()` exists but restnoded serialises string bodies
+  as JSON regardless.** The pipeline overwrites Content-Type for string bodies.
+  Workaround: inline static assets (CodeMirror JS+CSS) directly into `app.html`
+  as `<script>` and `<style>` blocks. No vendor file requests needed.
+
+- **`display:none` CSS cannot be overridden by class if an inline `style.display`
+  exists.** JS must clear inline styles (`el.style.display = ''`) not set them to
+  `'none'`, so CSS class rules retain control. Setting `style.display = 'none'`
+  permanently blocks class-based show/hide.
+
+- **Presentation files are NOT served by the iApps LX framework automatically.**
+  The framework only serves presentation files when a block instance exists. For
+  a standalone full-page app, add a `uiWorker.js` registered at
+  `shared/irule-versioner/ui` with `isPassThrough = true` that reads files from
+  `presentation/` using `fs.readFile` and calls `restOperation.setContentType()`.
+  Access the GUI at `/mgmt/shared/irule-versioner/ui`.
+
+- **`manifest.json` must be present in the install directory.** Without it the
+  iApps LX template picker hangs when creating a block instance. The RPM spec
+  must include it.
+
+- **Poll worker is the only available external change detection mechanism.**
+  BIG-IP exposes no mcpd change events or iRule modification webhooks to iApps
+  LX workers. Both TMUI GUI edits and VS Code iRules extension edits (which use
+  `load sys config merge`) write directly to mcpd and are visible via
+  `GET /mgmt/tm/ltm/rule` on the next poll cycle. Detection latency is bounded
+  by `pollIntervalSeconds`. Recommended default: 30s (negligible load, one
+  lightweight REST call per interval).
+
+- **Node.js constraints addendum — `0o` octal literals not supported in Node 6.**
+  Add to the constraints list alongside `const`, `let`, arrow functions, and
+  template literals: `0o600` → use `384`; `0o755` → use `493`; `0o644` → use `420`.
+
+---
+
+### Phase 3 — Enhanced editor: iRules syntax + click-to-docs (1 week)
 
 Deliverables:
-- `presentation/app.html` — full-page master-detail SPA
-- Left panel: searchable iRule list with flat/partition/VS grouping toggle
-- Right panel: Overview tab with read-only CodeMirror TCL viewer
-- Right panel: History tab with version timeline
-- Side-by-side diff viewer (line-level, colour-coded)
-- Two-step deploy/rollback flow: diff modal + mandatory reason field
-- PUT `/rules/:p/:n/retention` endpoint
-- GET `/audit` endpoint with pagination and rule filter
-- Right panel: Audit tab (per-rule filtered view)
-- In-GUI toast notifications
-- "Edit" button unlocking inline CodeMirror editor + save → deploy flow
-- CodeMirror bundled in `presentation/vendor/` (TCL mode, < 200KB)
-- Deploy endpoint made async: returns task ID, GUI polls for completion
+- Replace CodeMirror's generic TCL mode with the TextMate grammar from
+  `bitwisecook/tcl-lsp` (`editors/vscode/syntaxes/tcl.tmLanguage.json`)
+  for iRules-aware syntax highlighting in both the viewer and inline editor
+- iRules events (`HTTP_REQUEST`, `CLIENT_ACCEPTED`, etc.) highlighted as a
+  distinct token type from generic TCL keywords
+- Namespace commands (`HTTP::uri`, `LB::server`, `SSL::sessionid`, etc.)
+  highlighted as iRules-specific tokens
+- Click-to-docs: clicking any iRules event or command token opens the
+  CloudDocs reference page in a new browser tab
+- URL construction rules (no network round-trip — purely mechanical):
+  - iRules events: `https://clouddocs.f5.com/api/irules/<TOKEN>.html`
+    e.g. `HTTP_REQUEST` → `.../HTTP_REQUEST.html`
+  - iRules namespace commands: replace `::` with `__`, leave single `_`
+    unchanged e.g. `HTTP::uri` → `.../HTTP__uri.html`,
+    `HTTP::is_redirect` → `.../HTTP__is_redirect.html`
+  - Standard TCL commands: no CloudDocs link (coverage is unreliable);
+    optionally links to `https://www.tcl-lang.org/man/tcl8.4/TclCmd/<cmd>.htm`
+    when the "TCL man page links" setting is enabled (default: off)
+  - Standard TCL subcommands (e.g. `length` following `string`): walk back
+    to the parent command token for the link target; subcommand token alone
+    does not trigger a link
+- Settings toggle: "Link standard TCL commands to tcl-lang.org 8.4 docs"
+  (default off) — iRules CloudDocs links are always-on and not configurable
+- Grammar sourced from `bitwisecook/tcl-lsp` (AGPL-3.0); used via TextMate
+  grammar extraction only, not the Python LSP server which requires Python
+  3.10+ (not available on BIG-IP). The LSP server's deeper features (taint
+  analysis, collect/release pairing, arity checks) are not browser-portable
+  and are out of scope for this phase.
+- Grammar integrated via `shiki` or equivalent TextMate grammar tokeniser
+  bundled into `app.html` (same inline approach as CodeMirror)
+- Click handler uses `editor.coordsChar()` + `editor.getTokenAt()` to
+  identify the token under the cursor, classifies it by scope/text, and
+  calls `window.open(url, '_blank')` — no new backend endpoints needed
+
+**Design decisions:**
+- Token classification priority: tmLanguage scope name first (if it contains
+  an iRules-specific scope fragment); token text pattern second (contains
+  `::` → namespace command, all-caps-with-underscores → event candidate)
+- iRules CloudDocs links fire on single click in read-only view; in edit
+  mode, Ctrl+click (to avoid interfering with normal cursor placement)
+- No link is shown for tokens not recognised as iRules or TCL commands
+  (variables, string literals, comments, brace tokens, etc.)
 
 ---
 
-### Phase 3 — Syslog + webhook notifications (1–2 weeks)
+### Phase 4 — Syslog + webhook notifications (1–2 weeks)
 
 Deliverables:
 - Syslog emission via `tmsh log local0.notice` from config processor on
@@ -617,7 +721,7 @@ Deliverables:
 
 ---
 
-### Phase 4 — GitHub integration (3–4 weeks)
+### Phase 5 — GitHub integration (3–4 weeks)
 
 Deliverables:
 - `githubWorker.js` — new iControl LX worker registered at `/github`
@@ -640,7 +744,7 @@ Deliverables:
 
 ---
 
-### Phase 5 — Import/export + upgrade hardiness (2 weeks)
+### Phase 6 — Import/export + upgrade hardiness (2 weeks)
 
 Deliverables:
 - POST `/export` — streams a tar.gz of the full data directory
@@ -663,14 +767,14 @@ Deliverables:
 |------|------------|
 | restnoded Node.js version is old (Node 6 on TMOS 13/14) | Avoid ES6+ syntax in processor code; no arrow functions, no `const`/`let` in hot paths, no template literals in production code; test on Node 6 |
 | `fs.mkdir` `{ recursive }` not available on Node 6 | Already mitigated: `_mkdirpLegacy` fallback implemented in `versionStore.js` |
-| tmsh `save sys config` is slow on large configs (can take 10–30s) | Deploy endpoint should return a task ID immediately; GUI polls `/rules/:p/:n/deploy/status/:taskId` for completion rather than blocking the HTTP response |
+| tmsh `save sys config` is slow on large configs (can take 10–30s) | Moot — deploy now uses iControl REST PATCH which commits synchronously and does not require save sys config |
 | Poll worker stacking during failover | Already mitigated: single-flight `_running` boolean lock in `pollWorker.js` |
 | Large iRule content exceeding REST response buffer | iControl REST returns full `apiAnonymous` content in a single JSON response; BIG-IP enforces a 32MB response limit which is far above any realistic iRule size |
 | localhost:8100 trusted channel unavailable | Only occurs if restjavad is not running (system startup/failover). `bigipClient.js` surfaces a clear ECONNREFUSED error; the poll worker's single-flight lock prevents cascading failures |
 | GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI |
 | Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution |
-| CodeMirror bundle size | Bundle only TCL mode + core; target < 200KB; do not load from CDN |
-| BIG-IP management plane has no outbound internet | GitHub integration requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
+| CodeMirror bundle size | Inlined directly into `app.html` as `<script>`/`<style>` blocks (~187KB). No vendor file requests. CDN not used. `bundle-codemirror.sh` available if separate vendor files are needed for RPM size reasons. |
+| BIG-IP management plane has no outbound internet | GitHub integration (Phase 5) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
 | Concurrent deploys to the same iRule | Add per-rule deploy lock in Phase 2 (simple in-memory Map of `<fullPath> → boolean`) |
 
 ---
@@ -684,32 +788,32 @@ irule-versioner/
 ├── manifest.json                  ← iApps LX tag: { "tags": ["IAPP"] }
 ├── block_template.json            ← block input/output schema
 ├── nodejs/
-│   ├── index.js                   ← restnoded entry: exports all workers
+│   ├── index.js                   ← restnoded entry: exports all workers ✅
 │   └── lib/
-│       ├── configProcessor.js     ← block lifecycle: BINDING → BOUND
-│       ├── rulesWorker.js         ← REST: /rules (Phase 1+)
-│       ├── settingsWorker.js      ← REST: /settings
-│       ├── githubWorker.js        ← REST: /github (Phase 4)
-│       ├── bigipClient.js         ← iControl REST reads via localhost:8100 (no credentials)
-│       ├── tmsh.js                ← write operations only: deploy + save config
-│       ├── versionStore.js        ← filesystem version store
-│       ├── pollWorker.js          ← scheduled change detection
-│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 4)
-│       ├── settings.js            ← in-memory settings + persistence
-│       ├── blockUtil.js           ← iApps LX state transition helpers
-│       ├── logger.js              ← restnoded logger wrapper
+│       ├── configProcessor.js     ← block lifecycle: BINDING → BOUND ✅
+│       ├── rulesWorker.js         ← REST: /rules (Phase 1+2) ✅
+│       ├── settingsWorker.js      ← REST: /settings ✅
+│       ├── uiWorker.js            ← REST: /ui static file server (Phase 2) ✅
+│       ├── githubWorker.js        ← REST: /github (Phase 5)
+│       ├── bigipClient.js         ← iControl REST reads+writes via localhost:8100 ✅
+│       ├── tmsh.js                ← tmsh child process (syslog use in Phase 3) ✅
+│       ├── versionStore.js        ← filesystem version store ✅
+│       ├── pollWorker.js          ← scheduled change detection ✅
+│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 5)
+│       ├── settings.js            ← in-memory settings + persistence ✅
+│       ├── blockUtil.js           ← iApps LX state transition helpers ✅
+│       ├── logger.js              ← restnoded logger wrapper ✅
 │       └── migrations.js          ← schema migration framework (Phase 5)
 ├── presentation/
 │   ├── index.html                 ← embedded summary widget (Phase 1) ✅
-│   ├── app.html                   ← full-page master-detail GUI (Phase 2)
-│   └── vendor/
-│       ├── codemirror.min.js      ← bundled CodeMirror (Phase 2)
-│       └── codemirror.min.css     ← bundled CodeMirror styles (Phase 2)
+│   └── app.html                   ← full-page master-detail GUI, CodeMirror inlined (Phase 2) ✅
 ├── build/
 │   ├── build-rpm.sh               ← local rpmbuild, no credentials ✅
-│   └── install-rpm.sh             ← install on BIG-IP, $BIGIP_PASS env ✅
+│   ├── install-rpm.sh             ← install on BIG-IP, $BIGIP_PASS env ✅
+│   └── bundle-codemirror.sh       ← build-machine script to bundle CodeMirror vendor files ✅
 └── test/
-    └── unit.js                    ← tmsh parser + versionStore tests ✅
+    ├── unit.js                    ← versionStore + bigipClient async tests (16 passing) ✅
+    └── test-external-change.sh    ← end-to-end external change detection test ✅
 ```
 
 Files marked ✅ are complete. All others are planned for the phase indicated.
@@ -718,18 +822,17 @@ Files marked ✅ are complete. All others are planned for the phase indicated.
 
 ## Decisions deferred / not yet made
 
-- **Read path: iControl REST via localhost:8100** ✅ DECIDED (Phase 1)
-  Reads (`listAllRules`, `getRuleContent`) use `http.get` to
-  `localhost:8100/mgmt/tm/ltm/rule` with no credentials. restnoded's implicit
-  trust on this channel means no auth header is needed. The REST `apiAnonymous`
-  field returns clean TCL content with no tmsh metadata — eliminating the parser
-  entirely. tmsh is retained for write operations only.
+- **Read/write path: iControl REST via localhost:8100** ✅ DECIDED (Phase 1+2)
+  All reads and writes use `http`/`https` to `localhost:8100/mgmt/tm/ltm/rule`
+  with `Authorization: Basic admin:` (empty password validated on localhost).
+  Reads use `GET ?$select=apiAnonymous`. Writes use `PATCH { apiAnonymous }`.
+  `tmsh.js` is retained for Phase 3 syslog calls but is no longer in the deploy
+  path. `bigipClient.js` owns both reads and writes.
 
-
-- **Async deploy task tracking:** Phase 2 needs a mechanism for the deploy
-  endpoint to return a task ID and allow the GUI to poll for status. Options:
-  (a) in-memory Map in the rulesWorker module; (b) a small `tasks.json` file
-  in the data directory. Decision deferred to Phase 2 implementation.
+- **Async deploy task tracking:** ✅ DECIDED (Phase 2)
+  In-memory Map in `rulesWorker.js` (`_tasks` object keyed by taskId).
+  Tasks auto-evict after 1 hour. Per-rule deploy lock (`_deployLock`) prevents
+  concurrent deploys. Task IDs are `task-<seq>-<timestamp>`.
 
 - **Webhook payload signing algorithm:** HMAC-SHA256 matches GitHub's own
   webhook format, making it familiar. Alternative is a shared secret in an

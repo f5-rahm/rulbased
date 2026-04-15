@@ -124,5 +124,88 @@ function getRuleContent(partition, name, cb) {
 module.exports = {
   listAllRules: listAllRules,
   getRuleContent: getRuleContent,
-  _get: get  // exported for unit test monkey-patching
+  deployRule: deployRule,
+  _get: get,     // exported for unit test monkey-patching
+  _patch: patch  // exported for unit test monkey-patching
 };
+
+/**
+ * Make a PATCH request to the local iControl REST API.
+ * Used for deploying iRule content via apiAnonymous field.
+ * @param {string}   urlPath - URI path e.g. '/mgmt/tm/ltm/rule/~Common~my_rule'
+ * @param {object}   body    - request body (will be JSON-serialised)
+ * @param {function} cb      - cb(err, parsedBody)
+ */
+function patch(urlPath, body, cb) {
+  var bodyStr = JSON.stringify(body);
+  var options = {
+    host: MGMT_HOST,
+    port: MGMT_PORT,
+    path: urlPath,
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': AUTH_HEADER,
+      'Content-Length': Buffer.byteLength(bodyStr, 'utf8')
+    }
+  };
+
+  logger.debug('bigipClient.patch: ' + urlPath);
+
+  var req = http.request(options, function (res) {
+    var respBody = '';
+    res.setEncoding('utf8');
+    res.on('data', function (chunk) { respBody += chunk; });
+    res.on('end', function () {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return cb(new Error('HTTP ' + res.statusCode + ' from PATCH ' + urlPath + ': ' + respBody));
+      }
+      try {
+        cb(null, JSON.parse(respBody));
+      } catch (e) {
+        cb(new Error('Failed to parse PATCH response from ' + urlPath + ': ' + e.message));
+      }
+    });
+  });
+
+  req.on('error', function (err) {
+    logger.error('bigipClient.patch error on ' + urlPath + ': ' + err.message);
+    cb(err);
+  });
+
+  req.setTimeout(30000, function () {
+    req.abort();
+    cb(new Error('Timeout on PATCH ' + urlPath));
+  });
+
+  req.write(bodyStr, 'utf8');
+  req.end();
+}
+
+/**
+ * Deploy an iRule by PATCHing its apiAnonymous content via iControl REST.
+ * This replaces the tmsh load+save approach entirely — no temp files,
+ * no child processes, no permission issues.
+ * The REST write is committed to running config immediately; a separate
+ * 'save sys config' is NOT needed — the REST API handles persistence.
+ *
+ * @param {string}   partition
+ * @param {string}   name
+ * @param {string}   content  - raw TCL body (no outer wrapper)
+ * @param {function} cb       - cb(err)
+ */
+function deployRule(partition, name, content, cb) {
+  var encodedPath = '~' + partition + '~' + name;
+  var urlPath = '/mgmt/tm/ltm/rule/' + encodedPath;
+
+  logger.info('bigipClient.deployRule: PATCH ' + urlPath);
+
+  patch(urlPath, { apiAnonymous: content }, function (err, result) {
+    if (err) {
+      logger.error('bigipClient.deployRule failed: ' + err.message);
+      return cb(err);
+    }
+    logger.info('bigipClient.deployRule: success, generation=' + (result && result.generation));
+    cb(null);
+  });
+}

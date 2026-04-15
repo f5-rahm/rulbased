@@ -2,11 +2,25 @@
 
 var versionStore = require('./versionStore');
 var bigipClient = require('./bigipClient');
-var tmsh = require('./tmsh');
 var logger = require('./logger');
 var settings = require('./settings');
+var fs = require('fs');
+var path = require('path');
 
 var WORKER_URI_PATH = 'shared/irule-versioner/rules';
+
+// ---------------------------------------------------------------------------
+// Async deploy task tracking — in-memory Map (keyed by taskId)
+// Tasks survive the HTTP response but not a restnoded restart, which is fine:
+// if restnoded restarts mid-deploy, tmsh will either complete or abort
+// independently and the state will reconcile on next poll.
+// ---------------------------------------------------------------------------
+var _tasks = {};
+var _taskSeq = 0;
+
+// Per-rule deploy lock: prevents concurrent deploys to the same rule.
+// Key: "/partition/name", value: true while a deploy is running.
+var _deployLock = {};
 
 /**
  * Rules Worker
@@ -54,6 +68,15 @@ RulesWorker.prototype.onStart = function (success) {
   var dataDir = '/var/config/rest/iapps/irule-versioner/data';
 
   self.logger.info('[irule-versioner] RulesWorker.onStart: start');
+
+  // Wire settings.load() so persisted settings (poll interval, etc.) are
+  // available before the poll worker starts.  The data directory may not
+  // exist yet on first install — load() handles that gracefully.
+  try {
+    settings.load(dataDir);
+  } catch (se) {
+    self.logger.warning('[irule-versioner] RulesWorker.onStart: settings.load error: ' + se.message);
+  }
 
   try {
     versionStore.init(dataDir, function (initErr) {
@@ -122,7 +145,11 @@ RulesWorker.prototype.onStart = function (success) {
 
 function _startPollWorker(workerInstance, dataDir) {
   try {
-    var pollIntervalSeconds = 300;
+    var pollIntervalSeconds = settings.getAll().pollIntervalSeconds || 300;
+    if (pollIntervalSeconds <= 0) {
+      workerInstance.logger.info('[irule-versioner] RulesWorker.onStart: poll worker disabled (interval=0)');
+      return;
+    }
     var pollWorker = require('./pollWorker');
     pollWorker.start(dataDir, pollIntervalSeconds);
     workerInstance.logger.info('[irule-versioner] RulesWorker.onStart: poll worker started, interval=' + pollIntervalSeconds + 's');
@@ -148,6 +175,12 @@ RulesWorker.prototype.onGet = function (restOperation) {
     return _listRules(dataDir, restOperation);
   }
 
+  // GET /rules/audit  - paginated audit log (special-case before partition/name routing)
+  if (segments.length === 1 && segments[0] === 'audit') {
+    var params = _extractQuery(uri);
+    return _getAudit(dataDir, params, restOperation);
+  }
+
   // GET /rules/:partition/:name/versions
   if (segments.length === 3 && segments[2] === 'versions') {
     return _listVersions(dataDir, segments[0], segments[1], restOperation);
@@ -160,8 +193,31 @@ RulesWorker.prototype.onGet = function (restOperation) {
 
   // GET /rules/:partition/:name/diff?from=x&to=y
   if (segments.length === 3 && segments[2] === 'diff') {
-    var params = _extractQuery(uri);
-    return _getDiff(dataDir, segments[0], segments[1], params.from, params.to, restOperation);
+    var qparams = _extractQuery(uri);
+    return _getDiff(dataDir, segments[0], segments[1], qparams.from, qparams.to, restOperation);
+  }
+
+  // GET /rules/:partition/:name/deploy/status/:taskId
+  if (segments.length === 5 && segments[2] === 'deploy' && segments[3] === 'status') {
+    return _getDeployStatus(segments[4], restOperation);
+  }
+
+  _notFound(restOperation);
+};
+
+// ---------------------------------------------------------------------------
+// PUT handler
+// ---------------------------------------------------------------------------
+RulesWorker.prototype.onPut = function (restOperation) {
+  var segments = _getSegments(restOperation);
+  var body = restOperation.getBody() || {};
+  var dataDir = settings.getDataDir();
+
+  logger.info('RulesWorker.onPut segments=' + JSON.stringify(segments));
+
+  // PUT /rules/:partition/:name/retention
+  if (segments.length === 3 && segments[2] === 'retention') {
+    return _updateRetention(dataDir, segments[0], segments[1], body, restOperation);
   }
 
   _notFound(restOperation);
@@ -284,8 +340,45 @@ function _getDiff(dataDir, partition, name, fromHash, toHash, restOperation) {
 
 function _manualSnapshot(dataDir, partition, name, body, restOperation) {
   var message = body.message || 'Manual snapshot';
-  var author = body.author || 'unknown';
+  var author  = body.author  || 'unknown';
 
+  // If the caller provides content (e.g. GUI inline editor), use it directly
+  // and also deploy it to the live system so the rule matches the snapshot.
+  // If no content is provided, read the current live content as before.
+  if (body.content && typeof body.content === 'string' && body.content.trim().length > 0) {
+    var content = body.content;
+
+    // Deploy the edited content to the live system first
+    bigipClient.deployRule(partition, name, content, function (deployErr) {
+      if (deployErr) {
+        return _error(restOperation, 500, 'Failed to deploy edited content: ' + deployErr.message);
+      }
+
+      versionStore.saveVersion(dataDir, partition, name, content,
+        message, author, 'manual', function (saveErr, version) {
+          if (saveErr) {
+            return _error(restOperation, 500, 'Failed to save version: ' + saveErr.message);
+          }
+
+          var auditEntry = {
+            ts:     new Date().toISOString(),
+            author: author,
+            action: 'deploy',
+            rule:   '/' + partition + '/' + name,
+            toHash: version ? version.hash : null,
+            reason: message
+          };
+          versionStore.appendAudit(dataDir, auditEntry, function () {
+            restOperation.setStatusCode(201);
+            restOperation.setBody({ version: version, deployed: true });
+            restOperation.complete();
+          });
+        });
+    });
+    return;
+  }
+
+  // No content provided — snapshot current live state (original behaviour)
   bigipClient.getRuleContent(partition, name, function (err, content) {
     if (err) {
       return _error(restOperation, 404,
@@ -297,9 +390,100 @@ function _manualSnapshot(dataDir, partition, name, body, restOperation) {
           return _error(restOperation, 500, 'Failed to save version: ' + saveErr.message);
         }
         restOperation.setStatusCode(201);
-        restOperation.setBody({ version: version });
+        restOperation.setBody({ version: version, deployed: false });
         restOperation.complete();
       });
+  });
+}
+
+function _getDeployStatus(taskId, restOperation) {
+  var task = _tasks[taskId];
+  if (!task) {
+    return _error(restOperation, 404, 'Task not found: ' + taskId);
+  }
+  restOperation.setStatusCode(200);
+  restOperation.setBody(task);
+  restOperation.complete();
+}
+
+function _getAudit(dataDir, params, restOperation) {
+  var auditFile = path.join(dataDir, 'audit.jsonl');
+  var ruleFilter = params.rule || null;
+  var limit = Math.min(parseInt(params.limit, 10) || 25, 200);
+  var offset = parseInt(params.offset, 10) || 0;
+
+  fs.readFile(auditFile, { encoding: 'utf8' }, function (err, data) {
+    if (err) {
+      restOperation.setStatusCode(200);
+      restOperation.setBody({ items: [], total: 0, limit: limit, offset: offset });
+      restOperation.complete();
+      return;
+    }
+    var lines = (data || '').split('\n').filter(function (l) { return l.trim().length > 0; });
+    var entries = [];
+    lines.forEach(function (line) {
+      try {
+        var entry = JSON.parse(line);
+        if (!ruleFilter || entry.rule === ruleFilter) { entries.push(entry); }
+      } catch (pe) { /* skip malformed lines */ }
+    });
+    entries.reverse(); // most recent first
+    restOperation.setStatusCode(200);
+    restOperation.setBody({ items: entries.slice(offset, offset + limit), total: entries.length, limit: limit, offset: offset });
+    restOperation.complete();
+  });
+}
+
+function _updateRetention(dataDir, partition, name, body, restOperation) {
+  var policy = body.policy;
+  var max = body.max !== undefined ? body.max : null;
+  var validPolicies = ['unlimited', 'count', 'age'];
+  if (!policy || validPolicies.indexOf(policy) === -1) {
+    return _error(restOperation, 400, 'retention.policy must be one of: ' + validPolicies.join(', '));
+  }
+  if ((policy === 'count' || policy === 'age') && (max === null || isNaN(parseInt(max, 10)))) {
+    return _error(restOperation, 400, 'retention.max is required for policy=' + policy);
+  }
+  versionStore.getManifest(dataDir, partition, name, function (err, manifest) {
+    if (err) {
+      return _error(restOperation, 404, 'iRule not found in version store: ' + partition + '/' + name);
+    }
+    manifest.retention = {
+      policy: policy,
+      max: (policy === 'unlimited') ? null : parseInt(max, 10)
+    };
+    var safeName = name.replace(/\//g, '_');
+    var manifestFile = path.join(dataDir, partition, safeName, 'manifest.json');
+    fs.writeFile(manifestFile, JSON.stringify(manifest, null, 2), { encoding: 'utf8' }, function (writeErr) {
+      if (writeErr) {
+        return _error(restOperation, 500, 'Failed to save retention policy: ' + writeErr.message);
+      }
+      restOperation.setStatusCode(200);
+      restOperation.setBody({ retention: manifest.retention });
+      restOperation.complete();
+    });
+  });
+}
+
+function _finishTask(task, lockKey, errMsg, result) {
+  delete _deployLock[lockKey];
+  task.completedAt = new Date().toISOString();
+  if (errMsg) {
+    task.status = 'failed';
+    task.error = errMsg;
+    logger.error('Deploy task ' + task.taskId + ' failed: ' + errMsg);
+  } else {
+    task.status = 'completed';
+    task.result = result;
+    logger.info('Deploy task ' + task.taskId + ' completed successfully');
+  }
+  // Evict tasks older than 1 hour to avoid unbounded memory growth
+  var cutoff = Date.now() - 3600000;
+  Object.keys(_tasks).forEach(function (id) {
+    var t = _tasks[id];
+    if (t.status !== 'running' && t.completedAt && new Date(t.completedAt).getTime() < cutoff) {
+      delete _tasks[id];
+    }
   });
 }
 
@@ -315,50 +499,63 @@ function _deployVersion(dataDir, partition, name, body, restOperation) {
   }
 
   var author = body.author || 'unknown';
+  var lockKey = '/' + partition + '/' + name;
 
+  if (_deployLock[lockKey]) {
+    return _error(restOperation, 409, 'A deploy is already in progress for ' + lockKey);
+  }
+
+  // Create task record; respond immediately with 202 + taskId
+  _taskSeq++;
+  var taskId = 'task-' + _taskSeq + '-' + Date.now();
+  var task = {
+    taskId: taskId,
+    status: 'running',
+    rule: lockKey,
+    hash: hash,
+    author: author,
+    reason: reason,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    error: null,
+    result: null
+  };
+  _tasks[taskId] = task;
+  _deployLock[lockKey] = true;
+
+  restOperation.setStatusCode(202);
+  restOperation.setBody({ taskId: taskId, status: 'running' });
+  restOperation.complete();
+
+  // Async deploy
   versionStore.getVersionContent(dataDir, partition, name, hash, function (err, content) {
     if (err) {
-      return _error(restOperation, 404, 'Version not found: ' + hash);
+      return _finishTask(task, lockKey, 'Version not found: ' + hash, null);
     }
-
-    // Pre-deploy snapshot of current live state
     bigipClient.getRuleContent(partition, name, function (liveErr, liveContent) {
       var preDeploy = function (next) {
         if (liveErr || !liveContent) { return next(); }
         versionStore.saveVersion(dataDir, partition, name, liveContent,
           'Pre-deploy snapshot', author, 'pre-deploy', function () { next(); });
       };
-
       preDeploy(function () {
-        tmsh.deployRule(partition, name, content, function (deployErr) {
+        bigipClient.deployRule(partition, name, content, function (deployErr) {
           if (deployErr) {
-            return _error(restOperation, 500, 'tmsh deploy failed: ' + deployErr.message);
+            return _finishTask(task, lockKey, 'deploy failed: ' + deployErr.message, null);
           }
-
           versionStore.saveVersion(dataDir, partition, name, content,
             reason, author, 'tool-deploy', function (saveErr, version) {
-              if (saveErr) {
-                logger.warn('Deploy succeeded but post-deploy snapshot failed: ' +
-                  saveErr.message);
-              }
-
+              if (saveErr) { logger.warn('Deploy succeeded but post-deploy snapshot failed: ' + saveErr.message); }
               var auditEntry = {
                 ts: new Date().toISOString(),
                 author: author,
                 action: 'deploy',
-                rule: '/' + partition + '/' + name,
+                rule: lockKey,
                 toHash: hash,
                 reason: reason
               };
-
               versionStore.appendAudit(dataDir, auditEntry, function () {
-                restOperation.setStatusCode(200);
-                restOperation.setBody({
-                  deployed: hash,
-                  version: version,
-                  audit: auditEntry
-                });
-                restOperation.complete();
+                _finishTask(task, lockKey, null, { deployed: hash, version: version || null, audit: auditEntry });
               });
             });
         });
