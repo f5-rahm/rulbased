@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store">
   <title>iRule Versioner</title>
 
   <!--
@@ -770,6 +771,33 @@ span.CodeMirror-selectedtext { background: none; }
     .mono { font-family: "SFMono-Regular", Consolas, monospace; }
     .loading-row { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; }
     .error-row   { text-align: center; padding: 24px; color: var(--danger);    font-size: 12px; }
+
+    /* =======================================================================
+       iRules syntax token colours
+       irule-kw:  events (HTTP_REQUEST) and namespace prefixes (HTTP::)
+       irule-cmd: command following :: (the "uri" part of HTTP::uri)
+    ======================================================================= */
+    /* iRules tokens — underline shown when iruleLinks setting is on */
+    body.irv-irule-links .cm-irule-kw,
+    body.irv-irule-links .cm-irule-cmd {
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 2px;
+    }
+    /* Use higher specificity (element + class) so we beat .cm-keyword purple
+       on tokens like HTTP that the base TCL mode also recognises */
+    span.cm-irule-kw  { color: #E4002B !important; font-weight: 600; }
+    span.cm-irule-cmd { color: #009639 !important; font-weight: 600; }
+    body.iv-dark span.cm-irule-kw  { color: #ff4d6d !important; }
+    body.iv-dark span.cm-irule-cmd { color: #00c94a !important; }
+    /* Standard TCL commands — underline shown when tclManPageLinks is on */
+    body.irv-tcl-links .cm-tcl-cmd {
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 2px;
+    }
   </style>
 </head>
 
@@ -922,6 +950,24 @@ span.CodeMirror-selectedtext { background: none; }
           <input id="s-wsecret" type="password" placeholder="optional" style="width:200px">
         </div>
       </div>
+      <div class="s-section">
+        <h3>Editor</h3>
+        <div class="s-row">
+          <label for="s-irulelinks">Link iRules events and commands to CloudDocs</label>
+          <input id="s-irulelinks" type="checkbox">
+        </div>
+        <div class="s-row" style="margin-top:6px">
+          <label for="s-tcllinks">Link standard TCL commands to tcl-lang.org docs</label>
+          <input id="s-tcllinks" type="checkbox">
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;padding-left:0">
+          Highlighted tokens are underlined and clickable when the corresponding link setting is on.
+        </div>
+        <div class="s-row" style="margin-top:10px">
+          <label for="s-debug">Debug logging (console)</label>
+          <input id="s-debug" type="checkbox">
+        </div>
+      </div>
     </div>
     <div id="settings-ftr">
       <button id="btn-scancel" style="background:var(--bg);border:1px solid var(--border)">Cancel</button>
@@ -986,7 +1032,7 @@ span.CodeMirror-selectedtext { background: none; }
 
 <script>
 /* ==========================================================================
-   iRule Versioner — app.html  (Phase 2)
+   iRule Versioner — app.html  (Phase 3)
    Full-page master-detail SPA.
    Vanilla JS only. ES5-safe (var, function(){}, string concat, no Promise).
    ========================================================================== */
@@ -996,6 +1042,569 @@ span.CodeMirror-selectedtext { background: none; }
 var API     = '/mgmt/shared/irule-versioner';
 var POLL_MS = 1500;   // task-status poll cadence
 var POLL_MAX = 200;   // ~5 minutes at 1.5s
+
+/* ==========================================================================
+   iRules syntax overlay for CodeMirror
+   ============================================================================
+
+   VOCABULARY MAINTENANCE
+   ----------------------
+   When F5 adds new iRules events or namespace commands, update the two
+   structures below.  Canonical source of truth:
+     Events:   https://clouddocs.f5.com/api/irules/Events.html
+     Commands: https://clouddocs.f5.com/api/irules/Commands.html
+
+   IRULE_EVENTS   — array of event names (all-caps, underscores).
+   IRULE_NS_CMDS  — object keyed by namespace prefix (e.g. "HTTP"), value is
+                    an array of command names that follow "::".  The prefix
+                    alone (e.g. "HTTP" in "HTTP::uri") is also highlighted.
+
+   The overlay assigns two token class names that CSS targets:
+     cm-irule-kw  — events and namespace prefixes (including ::)
+     cm-irule-cmd — command after ::
+   ========================================================================== */
+
+/* Events — sourced from https://clouddocs.f5.com/api/irules/Events.html */
+var IRULE_EVENTS = [
+  /* ACCESS / APM */
+  'ACCESS_ACL_ALLOWED', 'ACCESS_ACL_DENIED',
+  'ACCESS_PER_REQUEST_AGENT_EVENT', 'ACCESS_POLICY_AGENT_EVENT',
+  'ACCESS_POLICY_COMPLETED', 'ACCESS_SAML_ASSERTION', 'ACCESS_SAML_AUTHN',
+  'ACCESS_SAML_SLO_REQ', 'ACCESS_SAML_SLO_RESP',
+  'ACCESS_SESSION_CLOSED', 'ACCESS_SESSION_STARTED',
+  'ACCESS2_POLICY_EXPRESSION_EVAL',
+  /* ADAPT */
+  'ADAPT_REQUEST_HEADERS', 'ADAPT_REQUEST_RESULT',
+  'ADAPT_RESPONSE_HEADERS', 'ADAPT_RESPONSE_RESULT',
+  /* ANTIFRAUD */
+  'ANTIFRAUD_ALERT', 'ANTIFRAUD_LOGIN',
+  /* ASM */
+  'ASM_REQUEST_BLOCKING', 'ASM_REQUEST_DONE',
+  'ASM_REQUEST_VIOLATION', 'ASM_RESPONSE_VIOLATION',
+  /* AUTH */
+  'AUTH_ERROR', 'AUTH_FAILURE', 'AUTH_RESULT', 'AUTH_SUCCESS', 'AUTH_WANTCREDENTIAL',
+  /* AVR */
+  'AVR_CSPM_INJECTION',
+  /* BOTDEFENSE */
+  'BOTDEFENSE_ACTION', 'BOTDEFENSE_REQUEST',
+  /* CACHE */
+  'CACHE_REQUEST', 'CACHE_RESPONSE', 'CACHE_UPDATE',
+  /* CATEGORY */
+  'CATEGORY_MATCHED',
+  /* CLASSIFICATION */
+  'CLASSIFICATION_DETECTED',
+  /* CONNECTOR */
+  'CONNECTOR_OPEN',
+  /* DIAMETER */
+  'DIAMETER_INGRESS', 'DIAMETER_EGRESS', 'DIAMETER_RETRANSMISSION',
+  /* DNS / GTM */
+  'DNS_REQUEST', 'DNS_RESPONSE',
+  /* DOSL7 */
+  'IN_DOSL7_ATTACK',
+  /* ECA */
+  'ECA_REQUEST_ALLOWED', 'ECA_REQUEST_DENIED',
+  /* FIX */
+  'FIX_HEADER', 'FIX_MESSAGE',
+  /* FLOW / GLOBAL */
+  'FLOW_INIT',
+  'EPI_NA_CHECK_HTTP_REQUEST',
+  'LB_FAILED', 'LB_SELECTED', 'LB_QUEUED',
+  'NAME_RESOLVED',
+  'PERSIST_DOWN',
+  'PING_REQUEST_READY', 'PING_RESPONSE_READY',
+  'RULE_INIT',
+  'SA_PICKED', 'SERVER_INIT',
+  /* GENERICMESSAGE */
+  'GENERICMESSAGE_EGRESS', 'GENERICMESSAGE_INGRESS',
+  /* GTP */
+  'GTP_GPDU_EGRESS', 'GTP_GPDU_INGRESS',
+  'GTP_PRIME_EGRESS', 'GTP_PRIME_INGRESS',
+  'GTP_SIGNALLING_EGRESS', 'GTP_SIGNALLING_INGRESS',
+  /* HTML */
+  'HTML_COMMENT_MATCHED', 'HTML_TAG_MATCHED',
+  /* HTTP */
+  'HTTP_CLASS_FAILED', 'HTTP_CLASS_SELECTED', 'HTTP_DISABLED',
+  'HTTP_PROXY_CONNECT', 'HTTP_PROXY_REQUEST', 'HTTP_PROXY_RESPONSE',
+  'HTTP_REJECT',
+  'HTTP_REQUEST', 'HTTP_REQUEST_DATA', 'HTTP_REQUEST_SEND', 'HTTP_REQUEST_RELEASE',
+  'HTTP_RESPONSE', 'HTTP_RESPONSE_CONTINUE', 'HTTP_RESPONSE_DATA', 'HTTP_RESPONSE_RELEASE',
+  /* ICAP */
+  'ICAP_REQUEST', 'ICAP_RESPONSE',
+  /* IP / TCP / UDP / SCTP — shared connection events */
+  'CLIENT_ACCEPTED', 'CLIENT_CLOSED', 'CLIENT_DATA',
+  'CLIENTSSL_DATA',
+  'SERVER_CLOSED', 'SERVER_CONNECTED', 'SERVER_DATA',
+  'SERVERSSL_DATA',
+  'USER_REQUEST', 'USER_RESPONSE',
+  /* IVS */
+  'IVS_ENTRY_REQUEST', 'IVS_ENTRY_RESPONSE',
+  /* JSON */
+  'JSON_REQUEST', 'JSON_REQUEST_ERROR', 'JSON_REQUEST_MISSING',
+  'JSON_RESPONSE', 'JSON_RESPONSE_ERROR', 'JSON_RESPONSE_MISSING',
+  /* L7CHECK */
+  'L7CHECK_CLIENT_DATA', 'L7CHECK_SERVER_DATA',
+  /* MQTT */
+  'MQTT_CLIENT_DATA', 'MQTT_CLIENT_EGRESS', 'MQTT_CLIENT_INGRESS',
+  'MQTT_CLIENT_SHUTDOWN',
+  'MQTT_SERVER_DATA', 'MQTT_SERVER_EGRESS', 'MQTT_SERVER_INGRESS',
+  /* MR */
+  'MR_EGRESS', 'MR_INGRESS', 'MR_FAILED',
+  /* PCP */
+  'PCP_REQUEST', 'PCP_RESPONSE',
+  /* PEM */
+  'PEM_POLICY',
+  /* QOE */
+  'QOE_PARSE_DONE',
+  /* REWRITE */
+  'REWRITE_REQUEST_DONE', 'REWRITE_RESPONSE_DONE',
+  /* RTSP */
+  'RTSP_REQUEST', 'RTSP_REQUEST_DATA', 'RTSP_RESPONSE', 'RTSP_RESPONSE_DATA',
+  /* SIP */
+  'SIP_REQUEST', 'SIP_REQUEST_DONE', 'SIP_REQUEST_SEND',
+  'SIP_RESPONSE', 'SIP_RESPONSE_DONE', 'SIP_RESPONSE_SEND',
+  /* SOCKS */
+  'SOCKS_REQUEST',
+  /* SSE */
+  'SSE_RESPONSE',
+  /* SSL */
+  'CLIENTSSL_CLIENTCERT', 'CLIENTSSL_CLIENTHELLO', 'CLIENTSSL_HANDSHAKE',
+  'CLIENTSSL_PASSTHROUGH', 'CLIENTSSL_SERVERHELLO_SEND',
+  'SERVERSSL_CLIENTHELLO_SEND', 'SERVERSSL_HANDSHAKE',
+  'SERVERSSL_SERVERCERT', 'SERVERSSL_SERVERHELLO',
+  /* STREAM */
+  'STREAM_MATCHED',
+  /* WS */
+  'WS_CLIENT_DATA', 'WS_CLIENT_FRAME', 'WS_CLIENT_FRAME_DONE',
+  'WS_REQUEST', 'WS_RESPONSE',
+  'WS_SERVER_DATA', 'WS_SERVER_FRAME', 'WS_SERVER_FRAME_DONE',
+  /* XML */
+  'XML_CONTENT_BASED_ROUTING'
+];
+
+/* Namespace commands — sourced from https://clouddocs.f5.com/api/irules/Commands.html
+   Each key is the namespace prefix that appears before ::.
+   Each value is the list of commands that follow ::. */
+var IRULE_NS_CMDS = {
+  'AAA': ['acct_result', 'acct_send', 'auth_result', 'auth_send'],
+  'ACCESS': [
+    'acl', 'disable', 'enable', 'ephemeral_auth', 'flowid', 'log', 'oauth',
+    'perflow', 'policy', 'respond', 'restrict_irule_events', 'saml',
+    'session', 'user', 'uuid'
+  ],
+  'ACCESS2': ['access2_proc'],
+  'ACL': ['action', 'eval'],
+  'ADAPT': [
+    'allow', 'context_create', 'context_current', 'context_delete_all',
+    'context_name', 'context_static', 'enable', 'preview_size', 'result',
+    'select', 'service_down_action', 'timeout'
+  ],
+  'ADM': ['health', 'is_ip_slowdown', 'is_mitigated'],
+  'AES': ['decrypt', 'encrypt', 'key'],
+  'ANTIFRAUD': [
+    'alert_additional_info', 'alert_bait_signatures', 'alert_component',
+    'alert_defined_value', 'alert_details', 'alert_device_id',
+    'alert_expected_value', 'alert_fingerprint', 'alert_forbidden_added_element',
+    'alert_guid', 'alert_html', 'alert_http_referrer', 'alert_id',
+    'alert_license_id', 'alert_min', 'alert_origin', 'alert_resolved_value',
+    'alert_score', 'alert_transaction_data', 'alert_transaction_id',
+    'alert_type', 'alert_username', 'alert_view_id', 'client_id', 'device_id',
+    'disable', 'disable_alert', 'disable_app_layer_encryption',
+    'disable_auto_transactions', 'disable_injection', 'disable_malware',
+    'disable_phishing', 'enable', 'enable_log', 'fingerprint', 'geo', 'guid',
+    'result'
+  ],
+  'ASM': [
+    'captcha', 'captcha_age', 'captcha_status', 'client_ip', 'deception',
+    'disable', 'enable', 'fingerprint', 'is_authenticated', 'login_status',
+    'microservice', 'payload', 'policy', 'raise', 'severity', 'signature',
+    'status', 'support_id', 'threat_campaign', 'unblock', 'uncaptcha',
+    'username', 'violation', 'violation_data'
+  ],
+  'ASN1': ['decode', 'element', 'encode'],
+  'AUTH': [
+    'abort', 'authenticate', 'authenticate_continue', 'cert_credential',
+    'cert_issuer_credential', 'last_event_session_id', 'password_credential',
+    'response_data', 'ssl_cc_ldap_status', 'ssl_cc_ldap_username', 'start',
+    'status', 'subscribe', 'unsubscribe', 'username_credential',
+    'wantcredential_prompt', 'wantcredential_prompt_style', 'wantcredential_type'
+  ],
+  'AVR': ['disable', 'enable', 'log', 'disable_cspm_injection'],
+  'BIGPROTO': ['enable_fix_reset'],
+  'BIGTCP': ['release_flow'],
+  'BOTDEFENSE': [
+    'action', 'bot_anomalies', 'bot_categories', 'bot_name', 'bot_signature',
+    'bot_signature_category', 'captcha_age', 'captcha_status', 'client_class',
+    'client_type', 'cookie_age', 'cookie_status', 'cs_allowed', 'cs_attribute',
+    'cs_possible', 'device_id', 'disable', 'enable', 'intent', 'micro_service',
+    'previous_action', 'previous_request_age', 'previous_support_id', 'reason',
+    'support_id'
+  ],
+  'BWC': ['color', 'debug', 'mark', 'measure', 'policy', 'pps', 'priority', 'rate'],
+  'CACHE': [
+    'accept_encoding', 'age', 'disable', 'enable', 'expire', 'fresh',
+    'header', 'headers', 'hits', 'payload', 'priority', 'trace', 'uri',
+    'useragent', 'userkey'
+  ],
+  'CATEGORY': ['analytics', 'filetype', 'matchtype', 'result', 'safesearch', 'lookup'],
+  'CLASSIFICATION': [
+    'app', 'category', 'disable', 'enable', 'protocol', 'result', 'urlcat', 'username'
+  ],
+  'CLASSIFY': ['application', 'category', 'defer', 'disable', 'urlcat', 'username'],
+  'COMPRESS': ['buffer_size', 'disable', 'enable', 'gzip', 'method', 'nodelay'],
+  'CONNECTOR': ['disable', 'enable', 'profile', 'remap'],
+  'CRYPTO': ['decrypt', 'encrypt', 'hash', 'keygen', 'sign', 'verify'],
+  'DATAGRAM': ['dns', 'ip', 'ip6', 'l2', 'tcp', 'udp'],
+  'DECOMPRESS': ['disable', 'enable'],
+  'DEMANGLE': ['disable', 'enable'],
+  'DHCP': ['version'],
+  'DHCPv4': [
+    'chaddr', 'ciaddr', 'drop', 'giaddr', 'hlen', 'hops', 'htype', 'len',
+    'opcode', 'option', 'reject', 'secs', 'siaddr', 'type', 'xid', 'yiaddr'
+  ],
+  'DHCPv6': [
+    'drop', 'hop_count', 'len', 'link_address', 'msg_type', 'option',
+    'peer_address', 'reject', 'transaction_id'
+  ],
+  'DIAMETER': [
+    'avp', 'command', 'disconnect', 'drop', 'header', 'host', 'is_request',
+    'is_response', 'is_retransmission', 'length', 'message', 'payload',
+    'persist', 'realm', 'respond', 'result', 'retransmission',
+    'retransmission_default', 'retransmission_reason', 'retransmit', 'retry',
+    'route_status', 'session', 'skip_capabilities_exchange', 'state'
+  ],
+  'DNS': [
+    'additional', 'answer', 'authority', 'class', 'disable', 'drop', 'edns0',
+    'enable', 'header', 'is_wideip', 'last_act', 'len', 'name', 'origin',
+    'ptype', 'query', 'question', 'rdata', 'return', 'rpz_policy', 'rr',
+    'rrname', 'rrtype', 'scrape', 'tsig', 'ttl', 'type'
+  ],
+  'DNSMSG': ['header', 'record', 'section'],
+  'DOSL7': ['disable', 'enable', 'health', 'is_ip_slowdown', 'is_mitigated', 'profile', 'slowdown'],
+  'DSLITE': ['remote_addr'],
+  'ECA': ['client_machine_name', 'disable', 'domainname', 'enable', 'select', 'status', 'username'],
+  'FIX': ['tag'],
+  'FLOW': ['create_related', 'idle_duration', 'idle_timeout', 'peer', 'priority', 'refresh', 'this'],
+  'FLOWTABLE': ['count', 'limit'],
+  'FTP': ['allow_active_mode', 'disable', 'enable', 'enforce_tls_session_reuse', 'ftps_mode', 'port'],
+  'GENERICMESSAGE': ['message', 'peer', 'route'],
+  'GTP': ['discard', 'header', 'ie', 'length', 'message', 'payload', 'tunnel'],
+  'HA': ['status'],
+  'HSL': ['open', 'send'],
+  'HTML': ['comment', 'disable', 'enable', 'tag'],
+  'HTTP': [
+    'class', 'close', 'collect', 'cookie', 'disable', 'enable', 'fallback',
+    'has_responded', 'header', 'host', 'hsts', 'is_keepalive', 'is_redirect',
+    'method', 'passthrough_reason', 'password', 'path', 'payload', 'proxy',
+    'query', 'redirect', 'reject_reason', 'release', 'request', 'request_num',
+    'respond', 'response', 'retry', 'status', 'uri', 'username', 'version'
+  ],
+  'HTTP2': [
+    'active', 'concurrency', 'disable', 'disconnect', 'enable', 'header',
+    'push', 'requests', 'stream', 'version'
+  ],
+  'ICAP': ['header', 'method', 'status', 'uri'],
+  'IKE': [
+    'auth_success', 'cert', 'san_dirname', 'san_dns', 'san_ediparty',
+    'san_email', 'san_ipadd', 'san_othername', 'san_rid', 'san_uri',
+    'san_x400', 'subjectAltName'
+  ],
+  'ILX': ['call', 'init', 'notify'],
+  'IMAP': ['activation_mode', 'disable', 'enable'],
+  'IP': [
+    'addr', 'client_addr', 'hops', 'idle_timeout', 'ingress_drop_rate',
+    'ingress_rate_limit', 'intelligence', 'local_addr', 'protocol',
+    'remote_addr', 'reputation', 'server_addr', 'stats', 'tos', 'ttl', 'version'
+  ],
+  'IPFIX': ['destination', 'msg', 'template'],
+  'ISESSION': ['deduplication'],
+  'ISTATS': ['get', 'incr', 'remove', 'set'],
+  'IVS_ENTRY': ['result'],
+  'JSON': ['array', 'create', 'get', 'object', 'parse', 'render', 'root', 'set', 'type'],
+  'L7CHECK': ['protocol'],
+  'LB': [
+    'bias', 'class', 'command', 'connect', 'connlimit', 'context_id', 'detach',
+    'down', 'dst_tag', 'enable_decisionlog', 'mode', 'persist', 'prime',
+    'queue', 'reselect', 'select', 'server', 'snat', 'src_tag', 'status', 'up'
+  ],
+  'LINK': ['lasthop', 'nexthop', 'qos', 'vlan_id'],
+  'LSN': [
+    'address', 'disable', 'inbound', 'persistence', 'pool', 'port'
+  ],
+  'MESSAGE': ['field', 'proto', 'type'],
+  'MQTT': [
+    'clean_session', 'client_id', 'collect', 'disable', 'disconnect', 'drop',
+    'dup', 'enable', 'insert', 'keep_alive', 'length', 'message', 'packet_id',
+    'password', 'payload', 'protocol_name', 'protocol_version', 'qos',
+    'release', 'replace', 'respond', 'retain', 'return_code', 'return_code_list',
+    'session_present', 'topic', 'type', 'username', 'will'
+  ],
+  'MR': [
+    'always_match_port', 'available_for_routing', 'collect', 'connect_back_port',
+    'connection_instance', 'connection_mode', 'equivalent_transport', 'flow_id',
+    'ignore_peer_port', 'instance', 'max_retries', 'message', 'payload', 'peer',
+    'prime', 'protocol', 'release', 'restore', 'retry', 'return', 'store',
+    'stream', 'transport'
+  ],
+  'NAME': ['lookup', 'response'],
+  'NSH': ['chain', 'context', 'md1', 'mimic', 'mocksf', 'path_id', 'service_index'],
+  'NTLM': ['disable', 'enable'],
+  'ONECONNECT': ['detach', 'label', 'reuse'],
+  'PCP': ['reject', 'request', 'response'],
+  'PEM': ['disable', 'enable', 'flow', 'policy', 'session', 'subscriber'],
+  'POLICY': ['controls', 'names', 'rules', 'targets'],
+  'POP3': ['activation_mode', 'disable', 'enable'],
+  'PROFILE': [
+    'access', 'auth', 'clientssl', 'diameter', 'exists', 'fasthttp', 'fastL4',
+    'ftp', 'http', 'httpclass', 'httpcompression', 'oneconnect', 'persist',
+    'serverssl', 'stream', 'tcp', 'udp', 'webacceleration', 'xml'
+  ],
+  'PSC': [
+    'attr', 'auth_user_name', 'calling_id', 'imeisv', 'imsi', 'ip_address',
+    'lease_time', 'policy', 'subscriber_id', 'tower_id', 'user_name'
+  ],
+  'QOE': ['disable', 'enable', 'video'],
+  'RADIUS': ['avp', 'code', 'id', 'rtdom'],
+  'RESOLV': ['lookup'],
+  'RESOLVER': ['name_lookup', 'summarize'],
+  'REST': ['send'],
+  'REWRITE': ['disable', 'enable', 'payload', 'post_process'],
+  'ROUTE': ['age', 'bandwidth', 'clear', 'cwnd', 'domain', 'expiration', 'mtu', 'rtt', 'rttvar'],
+  'RTSP': [
+    'collect', 'header', 'method', 'msg_source', 'payload', 'release',
+    'respond', 'status', 'uri', 'version'
+  ],
+  'SCTP': [
+    'client_port', 'collect', 'local_port', 'mss', 'payload', 'ppi',
+    'release', 'remote_port', 'respond', 'rto_initial', 'rto_max', 'rto_min',
+    'sack_timeout', 'server_port'
+  ],
+  'SDP': ['field', 'media', 'session_id'],
+  'SIP': [
+    'call_id', 'discard', 'from', 'header', 'message', 'method', 'payload',
+    'persist', 'record_route', 'respond', 'response', 'route', 'route_status',
+    'to', 'uri', 'via'
+  ],
+  'SMTPS': ['activation_mode', 'disable', 'enable'],
+  'SOCKS': ['allowed', 'destination', 'version'],
+  'SSE': ['field'],
+  'SSL': [
+    'allow_dynamic_record_sizing', 'allow_nonssl', 'alpn', 'authenticate',
+    'cert', 'cipher', 'clientrandom', 'collect', 'disable', 'enable',
+    'extensions', 'forward_proxy', 'handshake', 'is_renegotiation_secure',
+    'maximum_record_size', 'mode', 'modssl_sessionid_headers', 'nextproto',
+    'payload', 'profile', 'release', 'renegotiate', 'respond',
+    'secure_renegotiation', 'session', 'sessionid', 'sessionsecret',
+    'sessionticket', 'sni', 'tls13_secret', 'unclean_shutdown', 'verify_result'
+  ],
+  'STATS': ['get', 'incr', 'set', 'setmax', 'setmin'],
+  'STREAM': ['disable', 'enable', 'encoding', 'expression', 'match', 'max_matchsize', 'replace'],
+  'TCP': [
+    'abc', 'analytics', 'autowin', 'bandwidth', 'client_port', 'close',
+    'collect', 'congestion', 'delayed_ack', 'dsack', 'earlyrxmit', 'ecn',
+    'enhanced_loss_recovery', 'idletime', 'keepalive', 'limxmit', 'local_port',
+    'lossfilter', 'lossfilterburst', 'lossfilterrate', 'mss', 'nagle',
+    'naglemode', 'naglestate', 'notify', 'offset', 'option', 'pacing',
+    'payload', 'proxybuffer', 'proxybufferhigh', 'proxybufferlow', 'push_flag',
+    'rcv_scale', 'rcv_size', 'recvwnd', 'release', 'remote_port', 'respond',
+    'rexmt_thresh', 'rt_metrics_timeout', 'rto', 'rtt', 'rttvar', 'sendbuf',
+    'server_port', 'setmss', 'snd_cwnd', 'snd_scale', 'snd_ssthresh',
+    'snd_wnd', 'unused_port'
+  ],
+  'TMM': ['cmp_count', 'cmp_group', 'cmp_primary_group', 'cmp_unit'],
+  'UDP': [
+    'client_port', 'debug_queue', 'drop', 'hold', 'local_port', 'max_buf_pkts',
+    'max_rate', 'mss', 'payload', 'release', 'remote_port', 'respond',
+    'sendbuffer', 'server_port', 'unused_port'
+  ],
+  'URI': ['basename', 'compare', 'decode', 'encode', 'host', 'path', 'port', 'protocol', 'query'],
+  'VALIDATE': ['protocol'],
+  'VDI': ['disable', 'enable'],
+  'WAM': ['disable', 'enable'],
+  'WEBSSO': ['disable', 'enable', 'select'],
+  'WS': [
+    'collect', 'disconnect', 'enabled', 'frame', 'masking', 'message',
+    'payload', 'release', 'request', 'response'
+  ],
+  'X509': [
+    'cert_fields', 'extensions', 'hash', 'issuer', 'not_valid_after',
+    'not_valid_before', 'serial_number', 'signature_algorithm', 'subject',
+    'subject_alternative_name', 'verify'
+  ]
+};
+
+/* Build fast-lookup sets from the vocabulary above.
+   Using plain objects as sets (key → true) for ES5 compatibility. */
+var _IRULE_EVENT_SET = (function () {
+  var s = {};
+  for (var i = 0; i < IRULE_EVENTS.length; i++) { s[IRULE_EVENTS[i]] = true; }
+  return s;
+}());
+
+/* Flat set of all namespace prefixes */
+var _IRULE_NS_SET = (function () {
+  var s = {};
+  var keys = Object.keys(IRULE_NS_CMDS);
+  for (var i = 0; i < keys.length; i++) { s[keys[i]] = true; }
+  return s;
+}());
+
+/* Standard TCL commands that get man-page links when tclManPageLinks is on.
+   Source: https://www.tcl-lang.org/man/tcl8.4/TclCmd/contents.htm */
+var TCL_COMMANDS = [
+  'append', 'array', 'binary', 'break', 'catch', 'cd', 'clock', 'close',
+  'concat', 'continue', 'eof', 'error', 'eval', 'exec', 'exit', 'expr',
+  'fblocked', 'fconfigure', 'fcopy', 'file', 'fileevent', 'flush', 'for',
+  'foreach', 'format', 'gets', 'glob', 'global', 'history', 'if', 'incr',
+  'info', 'interp', 'join', 'lappend', 'lindex', 'linsert', 'list', 'llength',
+  'load', 'lrange', 'lreplace', 'lsearch', 'lset', 'lsort', 'namespace', 'open',
+  'package', 'pid', 'proc', 'puts', 'pwd', 'read', 'regexp', 'regsub',
+  'rename', 'return', 'scan', 'seek', 'set', 'socket', 'source', 'split',
+  'string', 'subst', 'switch', 'tell', 'time', 'trace', 'unset', 'update',
+  'uplevel', 'upvar', 'variable', 'vwait', 'while'
+];
+var _TCL_CMD_SET = (function () {
+  var s = {};
+  for (var i = 0; i < TCL_COMMANDS.length; i++) { s[TCL_COMMANDS[i]] = true; }
+  return s;
+}());
+
+/* --------------------------------------------------------------------------
+   CodeMirror iRules overlay mode — stateless (CM5 addOverlay requirement)
+
+   Uses stream.string and stream.start for lookbehind to detect the ::
+   context without needing overlay state.
+-------------------------------------------------------------------------- */
+function _makeIrulesOverlay() {
+  return {
+    token: function (stream) {
+      if (stream.eatSpace()) { return null; }
+
+      /* Consume :: — colour it only when preceded by a known namespace */
+      if (stream.match('::')) {
+        var nsEnd = stream.start; /* stream.start = position of first ':' */
+        var nsStart = nsEnd;
+        while (nsStart > 0 && /[A-Z0-9]/.test(stream.string.charAt(nsStart - 1))) {
+          nsStart--;
+        }
+        if (nsStart < nsEnd && _IRULE_NS_SET[stream.string.slice(nsStart, nsEnd)]) {
+          return 'irule-kw';
+        }
+        return null;
+      }
+
+      /* Skip $ variables entirely */
+      if (stream.peek() === '$') { stream.next(); return null; }
+
+      /* Read a word */
+      if (!stream.match(/[^\s{}\[\]();:]+/)) { stream.next(); return null; }
+
+      var word  = stream.current();
+      var start = stream.start;
+
+      /* Command after :: — check raw line for :: immediately before this token */
+      if (start >= 2 &&
+          stream.string.charAt(start - 1) === ':' &&
+          stream.string.charAt(start - 2) === ':') {
+        /* Only colour if the prefix before :: is a known namespace */
+        var nsE = start - 2;
+        var nsS = nsE;
+        while (nsS > 0 && /[A-Z0-9]/.test(stream.string.charAt(nsS - 1))) { nsS--; }
+        if (nsS < nsE && _IRULE_NS_SET[stream.string.slice(nsS, nsE)]) {
+          return 'irule-cmd';
+        }
+        return null;
+      }
+
+      /* iRules event */
+      if (_IRULE_EVENT_SET[word]) { return 'irule-kw'; }
+
+      /* Namespace prefix — peek to confirm :: follows */
+      if (_IRULE_NS_SET[word] && stream.match('::', false)) { return 'irule-kw'; }
+
+      /* Standard TCL command — always emit token class; CSS body class controls visibility */
+      if (_TCL_CMD_SET[word]) { return 'tcl-cmd'; }
+
+      return null;
+    }
+  };
+}
+
+/* --------------------------------------------------------------------------
+   Click-to-docs
+-------------------------------------------------------------------------- */
+function _getCloudDocsUrl(cm, pos) {
+  var lineText = cm.getLine(pos.line) || '';
+  var ch = pos.ch;
+
+  var left = ch;
+  while (left > 0 && /[\w:]/.test(lineText.charAt(left - 1))) { left--; }
+  var right = ch;
+  while (right < lineText.length && /[\w:]/.test(lineText.charAt(right))) { right++; }
+
+  var expr = lineText.slice(left, right);
+  if (!expr) { return null; }
+
+  var colonIdx = expr.indexOf('::');
+  if (colonIdx !== -1) {
+    var nsPrefix = expr.slice(0, colonIdx);
+    var nsCmd    = expr.slice(colonIdx + 2);
+    if (S.settings.iruleLinks && _IRULE_NS_SET[nsPrefix] && nsCmd) {
+      return 'https://clouddocs.f5.com/api/irules/' + nsPrefix + '__' + nsCmd + '.html';
+    }
+    return null;
+  }
+
+  if (S.settings.iruleLinks && _IRULE_EVENT_SET[expr]) {
+    return 'https://clouddocs.f5.com/api/irules/' + expr + '.html';
+  }
+
+  if (S.settings.tclManPageLinks && _TCL_CMD_SET[expr]) {
+    return 'https://www.tcl-lang.org/man/tcl8.4/TclCmd/' + expr + '.htm';
+  }
+
+  return null;
+}
+
+/* Apply/remove body classes that CSS uses to show/hide underlines on token classes.
+   Called on startup and whenever settings are saved. */
+function _applyEditorSettings() {
+  document.body.classList.toggle('irv-irule-links', !!S.settings.iruleLinks);
+  document.body.classList.toggle('irv-tcl-links',   !!S.settings.tclManPageLinks);
+}
+
+function _attachIrulesFeatures(cm, isEditor) {
+  if (!cm._irulesOverlayAdded) {
+    cm.addOverlay(_makeIrulesOverlay());
+    cm._irulesOverlayAdded = true;
+  }
+
+  if (cm._irulesClickHandler) {
+    document.removeEventListener('mousedown', cm._irulesClickHandler, true);
+  }
+
+  /* Use a capturing listener on document so we fire before any CM handler
+     and before any element with overflow:auto can swallow the event. */
+  cm._irulesClickHandler = function (e) {
+    if (!cm.getWrapperElement().contains(e.target)) { return; }
+
+    var coords = cm.coordsChar({ left: e.pageX, top: e.pageY }, 'page');
+    var url    = _getCloudDocsUrl(cm, coords);
+
+    if (S.settings.debugMode) {
+      console.log('[iRV] mousedown target=' + e.target.tagName +
+                  ' class="' + (e.target.className || '') + '"' +
+                  ' line=' + coords.line + ' ch=' + coords.ch +
+                  ' url=' + url);
+    }
+
+    if (url) {
+      e.preventDefault();
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  document.addEventListener('mousedown', cm._irulesClickHandler, true);
+}
 
 /* --------------------------------------------------------------------------
    State
@@ -1229,6 +1838,7 @@ function initEditor() {
     indentUnit: 2, tabSize: 2, indentWithTabs: false,
     readOnly: true, theme: 'default', viewportMargin: Infinity
   });
+  _attachIrulesFeatures(S.editor, true);
 }
 
 function setEditorContent(content, editable) {
@@ -1591,6 +2201,7 @@ function initViewer() {
     mode: 'tcl', lineNumbers: true, readOnly: true,
     theme: 'default', viewportMargin: Infinity
   });
+  _attachIrulesFeatures(S.viewerCM, false);
 }
 
 function setViewerContent(content) {
@@ -1664,12 +2275,18 @@ function renderAuditPag() {
 -------------------------------------------------------------------------- */
 function openSettings() {
   GET('/settings', function (err, data) {
-    if (!err && data) { S.settings = data; }
+    if (!err && data) {
+      var keys = Object.keys(data);
+      for (var i = 0; i < keys.length; i++) { S.settings[keys[i]] = data[keys[i]]; }
+    }
     var s = S.settings;
-    document.getElementById('s-poll').value    = s.pollIntervalSeconds || 300;
-    document.getElementById('s-syslog').checked = !!s.syslogEnabled;
-    document.getElementById('s-webhook').value  = s.webhookUrl || '';
-    document.getElementById('s-wsecret').value  = '';
+    document.getElementById('s-poll').value        = s.pollIntervalSeconds || 300;
+    document.getElementById('s-syslog').checked    = !!s.syslogEnabled;
+    document.getElementById('s-webhook').value     = s.webhookUrl || '';
+    document.getElementById('s-wsecret').value     = '';
+    document.getElementById('s-irulelinks').checked = !!s.iruleLinks;
+    document.getElementById('s-tcllinks').checked  = !!s.tclManPageLinks;
+    document.getElementById('s-debug').checked     = !!s.debugMode;
     document.getElementById('settings-overlay').style.display = 'block';
   });
 }
@@ -1680,13 +2297,23 @@ function saveSettings() {
   var p = {
     pollIntervalSeconds: parseInt(document.getElementById('s-poll').value, 10) || 300,
     syslogEnabled:       document.getElementById('s-syslog').checked,
-    webhookUrl:          document.getElementById('s-webhook').value.trim()
+    webhookUrl:          document.getElementById('s-webhook').value.trim(),
+    iruleLinks:          document.getElementById('s-irulelinks').checked,
+    tclManPageLinks:     document.getElementById('s-tcllinks').checked,
+    debugMode:           document.getElementById('s-debug').checked
   };
   var sec = document.getElementById('s-wsecret').value;
   if (sec) { p.webhookSecret = sec; }
   PUT('/settings', p, function (err) {
     if (err) { toast('error', 'Save failed', String(err)); }
-    else     { toast('success', 'Settings saved'); closeSettings(); }
+    else {
+      S.settings.iruleLinks      = p.iruleLinks;
+      S.settings.tclManPageLinks = p.tclManPageLinks;
+      S.settings.debugMode       = p.debugMode;
+      _applyEditorSettings();
+      toast('success', 'Settings saved');
+      closeSettings();
+    }
   });
 }
 
@@ -1869,7 +2496,23 @@ document.addEventListener('DOMContentLoaded', function () {
     if (e.target === this) { closeSettings(); }
   };
 
-  loadRuleList();
+  /* Load settings from server on startup so S.settings is populated
+     before any user interaction (needed for debugMode, tclManPageLinks, etc.)
+     Merge into S.settings rather than replacing so any subsequent partial
+     updates don't clobber keys. Then kick off the rule list load regardless. */
+  GET('/settings', function (err, data) {
+    if (!err && data) {
+      var keys = Object.keys(data);
+      for (var i = 0; i < keys.length; i++) {
+        S.settings[keys[i]] = data[keys[i]];
+      }
+      if (S.settings.debugMode) {
+        console.log('[iRV] startup settings loaded: debugMode=' + S.settings.debugMode);
+      }
+    }
+    _applyEditorSettings();
+    loadRuleList();
+  });
 });
 
 /* --------------------------------------------------------------------------

@@ -1,13 +1,13 @@
 # iRule Versioner — iApps LX Extension
 
 Version-control your BIG-IP iRules: snapshot, diff, deploy, and rollback —
-with an integrated GUI inside BIG-IP TMUI.
+with an integrated full-page GUI served directly from the BIG-IP management plane.
 
 ---
 
 ## Contents
 
-- [Phase 1 scope](#phase-1-scope)
+- [Features](#features)
 - [Requirements](#requirements)
 - [Directory structure](#directory-structure)
 - [Building the RPM](#building-the-rpm)
@@ -19,21 +19,53 @@ with an integrated GUI inside BIG-IP TMUI.
 - [Development workflow](#development-workflow)
 - [REST API reference](#rest-api-reference)
 - [Version store layout](#version-store-layout)
+- [Settings reference](#settings-reference)
 - [Running unit tests](#running-unit-tests)
 - [Key design decisions](#key-design-decisions)
 
 ---
 
-## Phase 1 scope
+## Features
 
+### Phase 1 — Core versioning
 - Automatic baseline snapshot of all iRules on first install
 - Local filesystem version store (JSON manifest + TCL blobs per rule)
 - Git-style versioning: short SHA-1 hash, author, timestamp, commit message
-- Scheduled polling for changes made outside this tool (default: every 5 min)
+- Scheduled polling for external changes (default: every 5 minutes)
 - REST API: list rules, version history, fetch content, diff, manual snapshot
 - Embedded summary widget in BIG-IP TMUI
-- tmsh-based iRule deployment (`load sys config merge` + `save sys config`)
+- iControl REST write path (`PATCH /mgmt/tm/ltm/rule`) — no tmsh permission issues
 - Append-only audit log (JSON Lines)
+
+### Phase 2 — Full-page GUI
+- Full-page master-detail SPA at `https://<bigip>/mgmt/shared/irule-versioner/ui`
+- Searchable iRule list with flat / by-partition grouping toggle
+- Overview tab: live TCL viewer with CodeMirror syntax highlighting
+- Inline editor: click Edit to modify a rule, Save & Deploy deploys atomically
+- History tab: version timeline, two-version compare, side-by-side colour-coded diff
+- Draggable resize handle between version list and diff pane
+- Two-step deploy flow: diff preview + mandatory change reason field
+- Audit tab: per-rule filtered audit log, paginated
+- In-GUI toast notifications (colour-coded, 5 s auto-dismiss, stacks to 3)
+- Configurable retention policy per rule (unlimited / count / age)
+- TMUI light/dark theme detection with live switching
+
+### Phase 3 — Enhanced editor: iRules syntax + click-to-docs
+- iRules-aware CodeMirror overlay on top of the base TCL mode
+- **Events** (`HTTP_REQUEST`, `CLIENT_ACCEPTED`, etc.) highlighted in F5 red (`#E4002B`)
+- **Namespace prefixes + `::` separator** (`HTTP::`) also in F5 red
+- **Namespace subcommands** (`uri`, `sessionid`, etc.) in jade green (`#009639`)
+- **Standard TCL commands** (`string`, `lindex`, `foreach`, etc.) underlined in their default colour when TCL links are enabled
+- `$variable::...` constructs correctly excluded from highlighting
+- Vocabulary sourced directly from CloudDocs (~130 events, ~75 namespace prefixes with full command lists)
+- Dotted underline + pointer cursor on all token classes when the corresponding link setting is on — immediately signals what is clickable
+- **Click-to-docs**: click any highlighted token to open the reference page in a new tab — works in both read-only and edit mode
+  - iRules events → `https://clouddocs.f5.com/api/irules/<EVENT>.html`
+  - Namespace commands → `https://clouddocs.f5.com/api/irules/<NS>__<cmd>.html`
+  - Standard TCL commands → `https://www.tcl-lang.org/man/tcl8.4/TclCmd/<cmd>.htm`
+- All link types independently togglable in Settings → Editor (both on by default)
+- Settings loaded on page startup — all toggles take effect immediately after a hard refresh without opening the settings modal
+- Debug logging toggle in Settings → Editor (off by default) — logs click target, coordinates, and resolved URL to the browser console
 
 ---
 
@@ -41,13 +73,12 @@ with an integrated GUI inside BIG-IP TMUI.
 
 | Component | Version |
 |-----------|---------|
-| BIG-IP TMOS | 13.0 or later (tested on 21.x) |
+| BIG-IP TMOS | 13.0 or later (tested on 14.x and 21.x) |
 | Node.js (restnoded) | 6.x (embedded in TMOS — no install needed) |
 | rpmbuild (build machine only) | Any recent version |
 | curl (build machine only) | Any recent version |
 
 The BIG-IP user account used for install must have the **Administrator** role.
-The `root` OS account cannot be used for iControl REST calls.
 
 ---
 
@@ -55,65 +86,57 @@ The `root` OS account cannot be used for iControl REST calls.
 
 ```
 irule-versioner/
-├── PLANNING.md                # Full project spec, design decisions, phase roadmap
-├── README.md                  # This file
-├── manifest.json              # iApps LX package tag
-├── block_template.json        # Block input/output property schema
+├── PLANNING.md                  ← project spec, design decisions, phase roadmap
+├── README.md                    ← this file
+├── manifest.json                ← iApps LX package tag
+├── block_template.json          ← block input/output property schema
 ├── nodejs/
-│   ├── index.js               # restnoded entry point
+│   ├── index.js                 ← restnoded entry point
 │   └── lib/
-│       ├── bigipClient.js     # iControl REST reads via localhost:8100
-│       ├── configProcessor.js # iApps LX block lifecycle
-│       ├── rulesWorker.js     # REST API: /rules/*
-│       ├── settingsWorker.js  # REST API: /settings
-│       ├── tmsh.js            # Write operations: deploy + save config
-│       ├── versionStore.js    # Filesystem version store
-│       ├── pollWorker.js      # Scheduled change detection
-│       ├── settings.js        # In-memory settings with persistence
-│       ├── blockUtil.js       # iApps LX state transition helpers
-│       └── logger.js          # restnoded logger wrapper
+│       ├── bigipClient.js       ← iControl REST reads + writes via localhost:8100
+│       ├── blockUtil.js         ← iApps LX state transition helpers
+│       ├── configProcessor.js   ← iApps LX block lifecycle
+│       ├── logger.js            ← restnoded logger wrapper
+│       ├── pollWorker.js        ← scheduled change detection
+│       ├── rulesWorker.js       ← REST API: /rules/*
+│       ├── settings.js          ← in-memory settings with persistence
+│       ├── settingsWorker.js    ← REST API: /settings
+│       ├── tmsh.js              ← tmsh child process (retained for Phase 5 syslog)
+│       ├── uiWorker.js          ← static file server: /ui/*
+│       └── versionStore.js      ← filesystem version store
 ├── presentation/
-│   └── index.html             # Embedded summary widget (shown in TMUI)
+│   ├── index.html               ← embedded summary widget (shown in TMUI)
+│   └── app.html                 ← full-page GUI (Phase 2+), CodeMirror inlined
 ├── build/
-│   ├── build-rpm.sh           # Local RPM build — no BIG-IP needed
-│   └── install-rpm.sh         # Upload and install on BIG-IP
+│   ├── build-rpm.sh             ← local RPM build, no BIG-IP needed
+│   ├── bundle-codemirror.sh     ← build-machine script for CodeMirror vendor bundle
+│   └── install-rpm.sh           ← upload and install on BIG-IP
 └── test/
-    └── unit.js                # Unit tests (no framework required)
+    ├── unit.js                  ← unit tests (16 passing, no framework required)
+    └── test-external-change.sh  ← end-to-end external change detection test
 ```
 
 ---
 
 ## Building the RPM
 
-The RPM is built entirely on your local machine — no BIG-IP connection or
-credentials required at build time.
-
 ```bash
 # Install rpmbuild if needed:
 #   macOS:         brew install rpm
 #   RHEL/CentOS:   sudo yum install rpm-build
 #   Ubuntu/Debian: sudo apt install rpm
-#
-# Or build in a container:
-#   docker run --rm -v $(pwd):/src centos:7 bash /src/build/build-rpm.sh 1.0.0 0001
 
 chmod +x build/build-rpm.sh
 ./build/build-rpm.sh 1.0.0 0001
 # Output: build/dist/irule-versioner-1.0.0-0001.noarch.rpm
 ```
 
-The version and release arguments (`1.0.0 0001`) are embedded in the RPM
-filename and reported by the package manager. Increment the release number
-(`0002`, `0003`) for patch updates, the minor or major version for feature
-releases.
+Increment the release number (`0002`, `0003`) for patch updates; increment the
+version for feature releases.
 
 ---
 
 ## Installing
-
-The password is read from the `BIGIP_PASS` environment variable — never a
-positional argument — so it does not appear in shell history or `ps` output.
-Use the BIG-IP `admin` account (or another Administrator-role account).
 
 ```bash
 export BIGIP_PASS=<password>
@@ -123,39 +146,36 @@ chmod +x build/install-rpm.sh
 
 **What happens during install:**
 
-1. The RPM is uploaded to `/var/config/rest/downloads/` on the BIG-IP.
-2. The iControl REST package-management-tasks endpoint installs the RPM,
-   placing files under `/var/config/rest/iapps/irule-versioner/`.
-3. restnoded restarts automatically and picks up the new workers.
-4. On first load, `onStart` fires and:
-   - Creates `/var/config/rest/iapps/irule-versioner/data/` if it doesn't exist
-   - Takes a baseline snapshot of every iRule currently on the system
-   - Starts the poll worker (default interval: 300 seconds)
-5. All iRules appear in the version store with `versionCount: 1` and
-   `source: "baseline"`.
+1. RPM is uploaded to `/var/config/rest/downloads/` on the BIG-IP.
+2. iControl REST package-management-tasks installs the RPM under `/var/config/rest/iapps/irule-versioner/`.
+3. restnoded restarts and picks up the new workers.
+4. `onStart` creates the data directory, baselines all iRules, starts the poll worker.
 
-**The version store data directory is NOT managed by the RPM.** It is created
-by the extension itself and intentionally excluded from the RPM file manifest.
-This means uninstalling or upgrading the package never deletes your version
-history.
+**The version store data directory is NOT managed by the RPM** — upgrading or
+uninstalling the package never deletes your version history.
+
+**Accessing the GUI:**
+```
+https://<bigip>/mgmt/shared/irule-versioner/ui
+```
 
 ---
 
 ## Verifying the install
 
 ```bash
-# All 3 workers should appear
+# All 4 workers should appear
 ssh root@<BIGIP> "grep 'has started' /var/log/restnoded/restnoded.log | grep irule-versioner"
-# Expected:
-#   config: [RestWorker] /shared/iapp/processors/irule-versioner has started. Name:ConfigProcessor
-#   config: [RestWorker] /shared/irule-versioner/rules has started. Name:RulesWorker
-#   config: [RestWorker] /shared/irule-versioner/settings has started. Name:SettingsWorker
+# Expected lines:
+#   ConfigProcessor   /shared/iapp/processors/irule-versioner
+#   RulesWorker       /shared/irule-versioner/rules
+#   SettingsWorker    /shared/irule-versioner/settings
+#   UiWorker          /shared/irule-versioner/ui
 
-# Baseline should have run
+# Baseline completion
 ssh root@<BIGIP> "grep 'baseline complete' /var/log/restnoded/restnoded.log"
-# Expected: info: [irule-versioner] RulesWorker.onStart: baseline complete, N rules snapshotted
 
-# Rules endpoint should return your iRules with versionCount: 1
+# Rules list
 curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules \
   | python3 -m json.tool
 ```
@@ -164,28 +184,13 @@ curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules 
 
 ## Upgrading
 
-To install a new version of the package:
-
-1. Build the new RPM with an incremented version or release number.
-2. Run the install script with the new RPM — the package manager handles the
-   upgrade automatically:
-
 ```bash
 export BIGIP_PASS=<password>
 ./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.1.0-0001.noarch.rpm
 ```
 
-**Version store behaviour during upgrade:**
-
-- The data directory (`/var/config/rest/iapps/irule-versioner/data/`) is
-  preserved across upgrades. Your version history, manifests, and audit log
-  are never touched by the install or uninstall process.
-- After upgrade, restnoded restarts and `onStart` fires again. It checks
-  whether the data directory already contains partition subdirectories — if it
-  does, the baseline is skipped and the poll worker starts immediately. Your
-  existing history is intact.
-- **A re-baseline is NOT performed on upgrade.** See [Re-baselining](#re-baselining)
-  if you want to force one.
+The data directory is preserved across upgrades. A re-baseline is not performed
+on upgrade — existing history is intact.
 
 ---
 
@@ -194,137 +199,87 @@ export BIGIP_PASS=<password>
 ```bash
 export BIGIP_PASS=<password>
 
-# Get the exact package name
-curl -sk -u admin:$BIGIP_PASS \
-  https://<BIGIP>/mgmt/shared/iapp/global-installed-packages \
+# Find the package name
+curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-packages \
   | python3 -c "import json,sys; [print(p['packageName']) for p in json.load(sys.stdin)['items'] if 'irule' in p['packageName'].lower()]"
 
-# Uninstall (replace packageName with the value from above)
+# Uninstall
 curl -sk -u admin:$BIGIP_PASS \
   -H "Content-Type: application/json" \
   -X POST https://<BIGIP>/mgmt/shared/iapp/package-management-tasks \
   -d '{"operation":"UNINSTALL","packageName":"irule-versioner-1.0.0-0001.noarch"}'
 ```
 
-**The version store is NOT deleted on uninstall.** The data directory at
-`/var/config/rest/iapps/irule-versioner/data/` remains on disk with your full
-version history. To remove it completely:
+The data directory at `/var/config/rest/iapps/irule-versioner/data/` is NOT
+deleted. Remove it manually only if you want to wipe all history:
 
 ```bash
 ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/irule-versioner/data"
 ```
 
-Only do this if you are certain you no longer need the version history. There
-is no undo.
-
 ---
 
 ## Re-baselining
 
-A re-baseline takes a fresh snapshot of every iRule currently on the system,
-skipping any rule that already has a manifest. It is useful if:
-
-- New iRules were added to the system before the poll worker detected them
-- You suspect the version store is out of sync with the current system state
-- You have manually deleted individual rule manifests and want them recreated
-
-**Re-baseline is triggered automatically** whenever restnoded starts and finds
-the data directory empty (i.e. no partition subdirectories). The simplest way
-to force a full re-baseline is:
-
 ```bash
-# 1. Delete the data directory contents (preserves the directory itself)
+# Wipe history and force full re-baseline on next start
 ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/irule-versioner/data/*"
-
-# 2. Restart restnoded — onStart will see an empty data dir and re-baseline
 ssh root@<BIGIP> "bigstart restart restnoded"
-
-# 3. Watch for completion
 ssh root@<BIGIP> "tail -f /var/log/restnoded/restnoded.log | grep irule-versioner"
-# Wait for: RulesWorker.onStart: baseline complete, N rules snapshotted
 ```
 
-**Warning:** deleting the data directory removes all version history, audit
-log entries, and stored snapshots. This is destructive and permanent. If you
-only want to add missing rules without losing existing history, use the manual
-snapshot endpoint instead:
+To add a single missing rule without wiping history:
 
 ```bash
-# Snapshot a specific rule that's missing from the store
 curl -sk -u admin:$BIGIP_PASS \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Manual baseline", "author": "admin"}' \
-  "https://<BIGIP>/mgmt/shared/irule-versioner/rules/Common/my_new_rule/snapshot"
+  -X POST -H "Content-Type: application/json" \
+  -d '{"message":"Manual baseline","author":"admin"}' \
+  https://<BIGIP>/mgmt/shared/irule-versioner/rules/Common/my_rule/snapshot
 ```
-
-The poll worker also auto-baselines any newly discovered rule (a rule present
-on the system but not yet in the version store) on its next cycle, so in
-normal operation missing rules are picked up within the configured poll interval.
 
 ---
 
 ## Development workflow
 
-For fast iteration without rebuilding the RPM, copy individual files directly
-to the running package directory and restart restnoded:
+For fast iteration, copy files directly and restart restnoded:
 
 ```bash
-# Copy a changed file
 scp nodejs/lib/rulesWorker.js root@<BIGIP>:/var/config/rest/iapps/irule-versioner/nodejs/lib/
-
-# Restart restnoded to pick it up
 ssh root@<BIGIP> "bigstart restart restnoded"
-
-# Watch logs
 ssh root@<BIGIP> "tail -f /var/log/restnoded/restnoded.log | grep irule-versioner"
 ```
 
-Changes to `presentation/` (HTML/CSS/JS) do **not** require a restnoded
-restart — they are served as static files.
+`presentation/app.html` changes do not require a restnoded restart — the file
+is read from disk on every request. Hard-reload the browser (Ctrl+Shift+R)
+to bypass any cached copy.
+
+The `patch-phase*.sh` scripts automate copy + restart in a single step:
+
+```bash
+scp patch-phase3.sh root@<BIGIP>:/tmp/
+ssh root@<BIGIP> bash /tmp/patch-phase3.sh
+```
 
 ---
 
 ## REST API reference
 
 All endpoints are under `/mgmt/shared/irule-versioner/`.
-Authentication uses the existing BIG-IP admin session cookie or basic auth.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/rules` | List all iRules — status, hash, version count, drift flag |
-| GET | `/rules/:partition/:name/versions` | Version history for one rule |
-| GET | `/rules/:partition/:name/versions/:hash` | TCL content of a specific version |
-| POST | `/rules/:partition/:name/snapshot` | Manual snapshot `{ message, author }` |
-| POST | `/rules/:partition/:name/deploy` | Deploy a version `{ hash, reason, author }` |
-| GET | `/rules/:partition/:name/diff?from=:hash&to=:hash` | Side-by-side line diff |
+| GET | `/rules` | List all iRules with status, hash, version count, drift flag |
+| GET | `/rules/:p/:n/versions` | Version history for one rule |
+| GET | `/rules/:p/:n/versions/:hash` | TCL content of a specific version |
+| POST | `/rules/:p/:n/snapshot` | Manual snapshot `{ message, author }` |
+| POST | `/rules/:p/:n/deploy` | Deploy a version `{ hash, reason, author }` → 202 `{ taskId }` |
+| GET | `/rules/:p/:n/deploy/status/:taskId` | Poll async deploy task status |
+| GET | `/rules/:p/:n/diff?from=:hash&to=:hash` | Side-by-side line diff |
+| PUT | `/rules/:p/:n/retention` | Update retention policy `{ policy, max }` |
+| GET | `/rules/audit` | Paginated audit log `?rule=&limit=&offset=` |
 | GET | `/settings` | Read global settings |
 | PUT | `/settings` | Update global settings |
-
-**Example — list all rules:**
-```bash
-curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules
-```
-
-**Example — version history:**
-```bash
-curl -sk -u admin:$BIGIP_PASS \
-  https://<BIGIP>/mgmt/shared/irule-versioner/rules/Common/my_rule/versions
-```
-
-**Example — diff two versions:**
-```bash
-curl -sk -u admin:$BIGIP_PASS \
-  "https://<BIGIP>/mgmt/shared/irule-versioner/rules/Common/my_rule/diff?from=a3f9c12&to=b2e1a09"
-```
-
-**Example — manual snapshot:**
-```bash
-curl -sk -u admin:$BIGIP_PASS \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"message":"Pre-change snapshot","author":"admin"}' \
-  https://<BIGIP>/mgmt/shared/irule-versioner/rules/Common/my_rule/snapshot
-```
+| GET | `/ui` | Serve full-page GUI |
 
 ---
 
@@ -335,49 +290,59 @@ curl -sk -u admin:$BIGIP_PASS \
   Common/
     my_rule/
       manifest.json     ← version history + retention policy
-      a3f9c12.tcl       ← TCL content blob, keyed by short SHA-1 hash
+      a3f9c12.tcl       ← TCL blob keyed by short SHA-1
       b2e1a09.tcl
   audit.jsonl           ← append-only audit log (JSON Lines)
   settings.json         ← persisted global settings
 ```
 
-This directory is **not managed by the RPM** — it survives install, upgrade,
-and uninstall unchanged. Delete it manually only if you want to wipe all history.
+---
+
+## Settings reference
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `dataDirectory` | string | `…/data` | Version store root — do not change after first install |
+| `pollIntervalSeconds` | integer | `300` | External-change poll interval; `0` disables polling |
+| `syslogEnabled` | boolean | `true` | Syslog on deploy/rollback/drift (Phase 5) |
+| `webhookUrl` | string | `""` | HTTP POST target for event notifications (Phase 5) |
+| `iruleLinks` | boolean | `true` | Click iRules events and namespace commands to open CloudDocs reference pages |
+| `tclManPageLinks` | boolean | `true` | Click standard TCL commands to open tcl-lang.org 8.4 man pages |
+| `debugMode` | boolean | `false` | Enable `[iRV]` browser console logging for click-to-docs troubleshooting |
 
 ---
 
 ## Running unit tests
 
-No BIG-IP, no npm install required — tests use Node.js built-ins only.
-
 ```bash
 node test/unit.js
+# 16 tests, no framework, no BIG-IP required
 ```
 
 ---
 
 ## Key design decisions
 
-**iControl REST for reads, tmsh for writes** — iRule content is read via
-`GET /mgmt/tm/ltm/rule` on localhost:8100, which returns the clean TCL body in
-the `apiAnonymous` field with no tmsh metadata mixed in. Deployments use
-`tmsh load sys config merge file` + `tmsh save sys config` — the battle-tested
-path for pushing config changes that guarantees persistence across reboots.
+**iControl REST for all reads and writes** — iRule content is read and written
+via localhost:8100. Reads use `GET` with `?$select=apiAnonymous` for clean TCL
+with no tmsh metadata. Writes use `PATCH { "apiAnonymous": content }`.
 
-**localhost:8100 authentication** — Requests to localhost:8100 with
-`Authorization: Basic admin:` (empty password) are accepted by restjavad
-without password validation. The username establishes identity for audit
-purposes; the password is never checked on the localhost channel. No
-credentials are stored anywhere in the extension.
+**localhost:8100 authentication** — `Authorization: Basic admin:` (empty
+password) is accepted by restjavad without password validation on the localhost
+channel. No credentials are stored anywhere in the extension.
 
-**Content-addressed blob store** — Version blobs are stored as
-`<7-char-sha1>.tcl` files. Identical content produces the same hash and is
-automatically deduplicated — saving the same rule twice without changes
-creates no new blob or manifest entry.
+**Content-addressed blob store** — Blobs are stored as `<7-char-sha1>.tcl`.
+Identical content auto-deduplicates — saving unchanged content produces no new
+blob or manifest entry.
 
-**Single-flight poll lock** — The poll worker uses a boolean flag to prevent
-concurrent poll cycles from stacking up during BIG-IP failover or high load.
+**No npm dependencies** — Only Node.js built-ins (`fs`, `path`, `crypto`,
+`child_process`, `http`). Compatible with Node.js 6.9.1 on TMOS 21.x.
 
-**No npm dependencies** — Only Node.js built-in modules are used (`fs`, `path`,
-`crypto`, `child_process`, `http`). This avoids compatibility issues with the
-Node.js 6.9.1 runtime embedded in TMOS 21.x and keeps the RPM small.
+**CodeMirror inlined** — The full CodeMirror bundle is inlined into `app.html`
+as `<script>` and `<style>` blocks. restnoded's RestOperation pipeline
+overwrites Content-Type for string bodies, making separate vendor file serving
+unreliable.
+
+**iRules overlay is stateless** — CodeMirror 5's `addOverlay` rejects
+`startState`/`copyState` at runtime. The overlay uses `stream.string` and
+`stream.start` lookbehind to determine namespace context without state.

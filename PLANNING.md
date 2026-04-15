@@ -660,55 +660,66 @@ Deliverables completed:
 
 ---
 
-### Phase 3 — Enhanced editor: iRules syntax + click-to-docs (1 week)
+### Phase 3 — Enhanced editor: iRules syntax + click-to-docs ✅ COMPLETE
 
-Deliverables:
-- Replace CodeMirror's generic TCL mode with the TextMate grammar from
-  `bitwisecook/tcl-lsp` (`editors/vscode/syntaxes/tcl.tmLanguage.json`)
-  for iRules-aware syntax highlighting in both the viewer and inline editor
-- iRules events (`HTTP_REQUEST`, `CLIENT_ACCEPTED`, etc.) highlighted as a
-  distinct token type from generic TCL keywords
-- Namespace commands (`HTTP::uri`, `LB::server`, `SSL::sessionid`, etc.)
-  highlighted as iRules-specific tokens
-- Click-to-docs: clicking any iRules event or command token opens the
-  CloudDocs reference page in a new browser tab
-- URL construction rules (no network round-trip — purely mechanical):
-  - iRules events: `https://clouddocs.f5.com/api/irules/<TOKEN>.html`
-    e.g. `HTTP_REQUEST` → `.../HTTP_REQUEST.html`
-  - iRules namespace commands: replace `::` with `__`, leave single `_`
-    unchanged e.g. `HTTP::uri` → `.../HTTP__uri.html`,
-    `HTTP::is_redirect` → `.../HTTP__is_redirect.html`
-  - Standard TCL commands: no CloudDocs link (coverage is unreliable);
-    optionally links to `https://www.tcl-lang.org/man/tcl8.4/TclCmd/<cmd>.htm`
-    when the "TCL man page links" setting is enabled (default: off)
-  - Standard TCL subcommands (e.g. `length` following `string`): walk back
-    to the parent command token for the link target; subcommand token alone
-    does not trigger a link
-- Settings toggle: "Link standard TCL commands to tcl-lang.org 8.4 docs"
-  (default off) — iRules CloudDocs links are always-on and not configurable
-- Grammar sourced from `bitwisecook/tcl-lsp` (AGPL-3.0); used via TextMate
-  grammar extraction only, not the Python LSP server which requires Python
-  3.10+ (not available on BIG-IP). The LSP server's deeper features (taint
-  analysis, collect/release pairing, arity checks) are not browser-portable
-  and are out of scope for this phase.
-- Grammar integrated via `shiki` or equivalent TextMate grammar tokeniser
-  bundled into `app.html` (same inline approach as CodeMirror)
-- Click handler uses `editor.coordsChar()` + `editor.getTokenAt()` to
-  identify the token under the cursor, classifies it by scope/text, and
-  calls `window.open(url, '_blank')` — no new backend endpoints needed
+**Status:** Implemented and validated on BIG-IP TMOS 21.x.
 
-**Design decisions:**
-- Token classification priority: tmLanguage scope name first (if it contains
-  an iRules-specific scope fragment); token text pattern second (contains
-  `::` → namespace command, all-caps-with-underscores → event candidate)
-- iRules CloudDocs links fire on single click in read-only view; in edit
-  mode, Ctrl+click (to avoid interfering with normal cursor placement)
-- No link is shown for tokens not recognised as iRules or TCL commands
-  (variables, string literals, comments, brace tokens, etc.)
+Deliverables completed:
+- Stateless CodeMirror overlay on top of the base TCL mode — iRules-aware tokenisation without replacing the base mode
+- Events (`HTTP_REQUEST`, `CLIENT_ACCEPTED`, etc.) highlighted in F5 red (`#E4002B`) with dotted underline and pointer cursor
+- Namespace prefixes and `::` separator highlighted in F5 red; subcommands highlighted in jade green (`#009639`)
+- Standard TCL commands emitted as `cm-tcl-cmd` tokens — underlined in their natural colour when `tclManPageLinks` is on
+- `$variable::...` constructs correctly excluded via `$` prefix guard in the overlay
+- Vocabulary sourced directly from CloudDocs: ~130 events across all modules, ~75 namespace prefixes with complete command lists
+- Click-to-docs: click any highlighted token in read-only or edit mode to open the reference page in a new tab
+  - iRules events → `https://clouddocs.f5.com/api/irules/<EVENT>.html`
+  - Namespace commands → `https://clouddocs.f5.com/api/irules/<NS>__<cmd>.html`
+  - Standard TCL commands → `https://www.tcl-lang.org/man/tcl8.4/TclCmd/<cmd>.htm`
+- Both link types independently togglable: `iruleLinks` (default true) and `tclManPageLinks` (default true)
+- Underlines gated on CSS body classes (`irv-irule-links`, `irv-tcl-links`) toggled by `_applyEditorSettings()` — no editor reload needed when settings change
+- `webhookSecret` added to `_defaults` (was missing, causing `settings.update()` to throw `Unknown setting` on any save that included a secret, silently breaking all settings saves)
+- Settings loaded on page startup via `GET /settings` in `DOMContentLoaded` — all toggles active from first interaction without opening the settings modal
+- Debug logging toggle (`debugMode` setting, default off) — gates `[iRV]` console output, itself persists correctly across hard refreshes
+
+**Lessons learned:**
+
+- **`addOverlay` rejects stateful overlays at runtime.** CM5 checks for `startState`/`copyState` on the overlay object and throws `"Overlays may not be stateful"` if present. Must use stateless overlays with `stream.string`/`stream.start` lookbehind for namespace context.
+
+- **`cm.on('mousedown', handler)` is a no-op.** `mousedown` is not a CodeMirror editor event. Must use `document.addEventListener('mousedown', handler, true)` (capturing) with a `cm.getWrapperElement().contains(e.target)` guard.
+
+- **`coordsChar` only supports `'page'`, `'local'`, and `'div'` modes.** Passing `'window'` falls into the wrong branch of the internal `Qn()` coordinate converter and maps every click to a garbage position. Use `e.pageX`/`e.pageY` with `'page'` mode.
+
+- **`!important` + `span.` specificity required to beat the base TCL mode.** The base TCL mode's keyword list includes `http` (case-insensitive), colouring `HTTP` purple as a `cm-keyword`. The overlay's `cm-irule-kw` class must use `span.cm-irule-kw { color: … !important }` to win the cascade.
+
+- **Overlay `stream.start` points to the start of the current token, not after it.** When matching `::`, `stream.start` is the position of the first `:`. The namespace prefix sits at `stream.string[nsStart..stream.start]`, not at `stream.string[nsStart..stream.start-2]`.
+
+- **Browser caching stale `app.html`.** restnoded sends no cache headers. Added `<meta http-equiv="Cache-Control" content="no-store">` to `app.html` head to prevent stale loads during development.
+
+- **Settings must be loaded on startup, not only when the modal opens.** `GET /settings` was only called inside `openSettings()`. Flags like `debugMode` and `iruleLinks` were `undefined` (falsy) until the user manually opened settings. Fixed by fetching settings in `DOMContentLoaded` before `loadRuleList()`.
+
+- **Overlay token classes must be applied unconditionally; CSS body classes gate visual presentation.** The overlay runs synchronously during CM rendering and has no access to async settings state. Emitting `tcl-cmd` always and toggling a `body.irv-tcl-links` class allows settings changes to take effect immediately via CSS without re-initialising the overlay.
 
 ---
 
-### Phase 4 — Syslog + webhook notifications (1–2 weeks)
+### Phase 4 — Dashboard + branding (1 week)
+
+Deliverables:
+- **Dashboard homepage** — shown when the GUI first loads (before any rule is selected)
+  - Intro panel: tool name, brief description, version, link to docs
+  - Latest iRule changes widget: the N most recent version entries across all rules (author, rule name, timestamp, message), pulled from the existing audit log
+  - Package changelog panel: a human-readable list of what changed in each release of the extension itself (maintained as a static block in `app.html` or a separate `CHANGELOG.md` inlined at build time)
+- **Header rebrand**
+  - Top-left title changes from "BIG-IP iApps LX — iRule Versioner" to "iRules Versioning"
+  - "BIG-IP iApps LX" tagline removed entirely
+  - Clicking the "iRules Versioning" title in the header navigates back to the dashboard (deselects any selected rule, returns to dashboard view)
+- **SPA view model**
+  - Add `dashboard` as a named view alongside the existing rule-detail view
+  - Initial load always shows dashboard; selecting a rule from the list switches to rule-detail; clicking the header title returns to dashboard
+  - No new backend endpoints required — dashboard data is assembled from the existing `/rules` list and `/rules/audit` endpoint
+
+---
+
+### Phase 5 — Syslog + webhook notifications (1–2 weeks)
 
 Deliverables:
 - Syslog emission via `tmsh log local0.notice` from config processor on
@@ -721,7 +732,7 @@ Deliverables:
 
 ---
 
-### Phase 5 — GitHub integration (3–4 weeks)
+### Phase 6 — GitHub integration (3–4 weeks)
 
 Deliverables:
 - `githubWorker.js` — new iControl LX worker registered at `/github`
@@ -744,7 +755,7 @@ Deliverables:
 
 ---
 
-### Phase 6 — Import/export + upgrade hardiness (2 weeks)
+### Phase 7 — Import/export + upgrade hardiness (2 weeks)
 
 Deliverables:
 - POST `/export` — streams a tar.gz of the full data directory
@@ -794,19 +805,19 @@ irule-versioner/
 │       ├── rulesWorker.js         ← REST: /rules (Phase 1+2) ✅
 │       ├── settingsWorker.js      ← REST: /settings ✅
 │       ├── uiWorker.js            ← REST: /ui static file server (Phase 2) ✅
-│       ├── githubWorker.js        ← REST: /github (Phase 5)
+│       ├── githubWorker.js        ← REST: /github (Phase 6)
 │       ├── bigipClient.js         ← iControl REST reads+writes via localhost:8100 ✅
-│       ├── tmsh.js                ← tmsh child process (syslog use in Phase 3) ✅
+│       ├── tmsh.js                ← tmsh child process (retained for Phase 5 syslog) ✅
 │       ├── versionStore.js        ← filesystem version store ✅
 │       ├── pollWorker.js          ← scheduled change detection ✅
-│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 5)
+│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 6)
 │       ├── settings.js            ← in-memory settings + persistence ✅
 │       ├── blockUtil.js           ← iApps LX state transition helpers ✅
 │       ├── logger.js              ← restnoded logger wrapper ✅
-│       └── migrations.js          ← schema migration framework (Phase 5)
+│       └── migrations.js          ← schema migration framework (Phase 7)
 ├── presentation/
 │   ├── index.html                 ← embedded summary widget (Phase 1) ✅
-│   └── app.html                   ← full-page master-detail GUI, CodeMirror inlined (Phase 2) ✅
+│   └── app.html                   ← full-page GUI, CodeMirror + iRules overlay inlined (Phase 2+3) ✅
 ├── build/
 │   ├── build-rpm.sh               ← local rpmbuild, no credentials ✅
 │   ├── install-rpm.sh             ← install on BIG-IP, $BIGIP_PASS env ✅
@@ -826,7 +837,7 @@ Files marked ✅ are complete. All others are planned for the phase indicated.
   All reads and writes use `http`/`https` to `localhost:8100/mgmt/tm/ltm/rule`
   with `Authorization: Basic admin:` (empty password validated on localhost).
   Reads use `GET ?$select=apiAnonymous`. Writes use `PATCH { apiAnonymous }`.
-  `tmsh.js` is retained for Phase 3 syslog calls but is no longer in the deploy
+  `tmsh.js` is retained for Phase 5 syslog calls but is no longer in the deploy
   path. `bigipClient.js` owns both reads and writes.
 
 - **Async deploy task tracking:** ✅ DECIDED (Phase 2)
@@ -837,14 +848,14 @@ Files marked ✅ are complete. All others are planned for the phase indicated.
 - **Webhook payload signing algorithm:** HMAC-SHA256 matches GitHub's own
   webhook format, making it familiar. Alternative is a shared secret in an
   `Authorization` header. Decision: use HMAC-SHA256 (`X-Hub-Signature-256`)
-  to match GitHub convention, but implement in Phase 3.
+  to match GitHub convention, but implement in Phase 5.
 
 - **Import conflict UI:** when importing a tar.gz that contains versions for
   rules that already have local history, the user needs to choose merge vs
   replace. The exact UI treatment (modal per-rule vs global choice) is
-  deferred to Phase 5.
+  deferred to Phase 7.
 
 - **GitHub App private key storage:** PEM keys are multi-line and don't store
   cleanly in a single iApps LX block property. Options: (a) store as a single
   `\n`-escaped string; (b) write to a separate file in the data directory and
-  store only the path in settings. Decision deferred to Phase 4.
+  store only the path in settings. Decision deferred to Phase 6.

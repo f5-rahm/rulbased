@@ -18,7 +18,11 @@ var _defaults = {
   dataDirectory: '/var/config/rest/iapps/irule-versioner/data',
   pollIntervalSeconds: 300,
   syslogEnabled: true,
-  webhookUrl: ''
+  webhookUrl: '',
+  webhookSecret: '',
+  iruleLinks: true,
+  tclManPageLinks: true,
+  debugMode: false
 };
 
 var _current = JSON.parse(JSON.stringify(_defaults));
