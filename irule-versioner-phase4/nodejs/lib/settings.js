@@ -22,7 +22,8 @@ var _defaults = {
   webhookSecret: '',
   iruleLinks: true,
   tclManPageLinks: true,
-  debugMode: false
+  debugMode: false,
+  dashboardAuditLimit: 15
 };
 
 var _current = JSON.parse(JSON.stringify(_defaults));

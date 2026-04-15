@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iRule Versioner</title>
+  <style>
+    /* -----------------------------------------------------------------------
+       Theme detection: reads the BIG-IP TMUI body class to determine
+       light vs dark mode, then applies matching CSS variables.
+       MutationObserver watches for live theme switches.
+    ----------------------------------------------------------------------- */
+    :root {
+      --bg-primary:    #ffffff;
+      --bg-secondary:  #f5f5f5;
+      --bg-card:       #ffffff;
+      --border:        #dcdcdc;
+      --text-primary:  #1a1a1a;
+      --text-secondary:#5a5a5a;
+      --text-muted:    #909090;
+      --accent:        #0070c0;
+      --accent-hover:  #005a9e;
+      --success:       #2e7d32;
+      --success-bg:    #e8f5e9;
+      --warning:       #e65100;
+      --warning-bg:    #fff3e0;
+      --danger:        #c62828;
+      --danger-bg:     #ffebee;
+      --badge-drift-bg:#fff3e0;
+      --badge-drift-fg:#7a4000;
+      --badge-ok-bg:   #e8f5e9;
+      --badge-ok-fg:   #1b5e20;
+      --badge-new-bg:  #e3f2fd;
+      --badge-new-fg:  #0d3c6e;
+    }
+
+    body.dark-mode, body[data-theme="dark"] {
+      --bg-primary:    #1e1e1e;
+      --bg-secondary:  #2a2a2a;
+      --bg-card:       #2a2a2a;
+      --border:        #3e3e3e;
+      --text-primary:  #e8e8e8;
+      --text-secondary:#aaaaaa;
+      --text-muted:    #686868;
+      --accent:        #4da6ff;
+      --accent-hover:  #80bfff;
+      --success:       #66bb6a;
+      --success-bg:    #1b3a1c;
+      --warning:       #ffa040;
+      --warning-bg:    #3a2200;
+      --danger:        #ef5350;
+      --danger-bg:     #3a1010;
+      --badge-drift-bg:#3a2200;
+      --badge-drift-fg:#ffa040;
+      --badge-ok-bg:   #1b3a1c;
+      --badge-ok-fg:   #66bb6a;
+      --badge-new-bg:  #0d2a45;
+      --badge-new-fg:  #4da6ff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      font-size: 13px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      padding: 16px;
+      line-height: 1.5;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .header .version-badge {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: 8px;
+    }
+
+    .open-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 6px 14px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .open-btn:hover { background: var(--accent-hover); }
+
+    /* Stat cards row */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .stat-card .value {
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+
+    .stat-card .label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .stat-card.drift .value { color: var(--warning); }
+
+    /* Recent changes table */
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+    }
+
+    .rule-list {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .rule-row {
+      display: flex;
+      align-items: center;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+    }
+    .rule-row:last-child { border-bottom: none; }
+    .rule-row:hover { background: var(--bg-secondary); }
+
+    .rule-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rule-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 10px;
+      white-space: nowrap;
+    }
+    .badge.drift   { background: var(--badge-drift-bg); color: var(--badge-drift-fg); }
+    .badge.clean   { background: var(--badge-ok-bg);    color: var(--badge-ok-fg); }
+    .badge.new     { background: var(--badge-new-bg);   color: var(--badge-new-fg); }
+
+    .hash {
+      font-family: "Courier New", monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .poll-info {
+      margin-top: 12px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .loading { color: var(--text-muted); font-size: 13px; padding: 20px 0; text-align: center; }
+    .error-msg { color: var(--danger); font-size: 12px; padding: 8px 0; }
+
+    .spinner {
+      display: inline-block;
+      width: 12px; height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>iRule Versioner <span class="version-badge">v1.0.0</span></h1>
+    </div>
+    <a class="open-btn" href="/iapps/irule-versioner/presentation/app.html" target="_blank">
+      Open Full Manager ↗
+    </a>
+  </div>
+
+  <div id="content">
+    <div class="loading"><span class="spinner"></span>Loading...</div>
+  </div>
+
+  <script>
+    // -----------------------------------------------------------------------
+    // Theme detection
+    // -----------------------------------------------------------------------
+    (function () {
+      function applyTheme() {
+        try {
+          var parentBody = window.parent && window.parent.document
+            ? window.parent.document.body : document.body;
+          var isDark = parentBody.classList.contains('dark-mode') ||
+                       parentBody.getAttribute('data-theme') === 'dark' ||
+                       parentBody.classList.contains('theme-dark');
+          if (isDark) {
+            document.body.classList.add('dark-mode');
+          } else {
+            document.body.classList.remove('dark-mode');
+          }
+        } catch (e) { /* cross-origin frame — default to light */ }
+      }
+      applyTheme();
+      try {
+        var observer = new MutationObserver(applyTheme);
+        observer.observe(
+          window.parent ? window.parent.document.body : document.body,
+          { attributes: true, attributeFilter: ['class', 'data-theme'] }
+        );
+      } catch (e) {}
+    })();
+
+    // -----------------------------------------------------------------------
+    // Data loading
+    // -----------------------------------------------------------------------
+    var BASE = '/mgmt/shared/irule-versioner';
+
+    function get(path, cb) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', BASE + path, true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) { return; }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { cb(null, JSON.parse(xhr.responseText)); }
+          catch (e) { cb(new Error('Invalid JSON response')); }
+        } else {
+          cb(new Error('HTTP ' + xhr.status));
+        }
+      };
+      xhr.send();
+    }
+
+    function _relativeTime(isoString) {
+      if (!isoString) { return '—'; }
+      var diff = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+      if (diff < 60)   { return diff + 's ago'; }
+      if (diff < 3600) { return Math.floor(diff / 60) + 'm ago'; }
+      if (diff < 86400){ return Math.floor(diff / 3600) + 'h ago'; }
+      return Math.floor(diff / 86400) + 'd ago';
+    }
+
+    function render(rules) {
+      var total = rules.length;
+      var drifted = rules.filter(function (r) { return r.drifted; }).length;
+      var lastPoll = '—';
+
+      // Sort by most recently changed first
+      var sorted = rules.slice().sort(function (a, b) {
+        var ta = a.latestTimestamp ? new Date(a.latestTimestamp).getTime() : 0;
+        var tb = b.latestTimestamp ? new Date(b.latestTimestamp).getTime() : 0;
+        return tb - ta;
+      });
+      var recent = sorted.slice(0, 8);
+
+      var rows = recent.map(function (r) {
+        var badge = r.drifted
+          ? '<span class="badge drift">DRIFT</span>'
+          : (r.inVersionStore ? '<span class="badge clean">OK</span>' : '<span class="badge new">NEW</span>');
+        var hash = r.latestHash ? '<span class="hash">' + r.latestHash + '</span>' : '';
+        var time = '<span class="rule-meta">' + _relativeTime(r.latestTimestamp) + '</span>';
+        var name = r.fullPath || '/' + r.partition + '/' + r.name;
+        return '<div class="rule-row">'
+          + badge
+          + '<span class="rule-name" title="' + name + '">' + name + '</span>'
+          + hash
+          + time
+          + '</div>';
+      }).join('');
+
+      var html = '<div class="stats">'
+        + '<div class="stat-card"><div class="value">' + total + '</div><div class="label">Tracked</div></div>'
+        + '<div class="stat-card drift"><div class="value">' + drifted + '</div><div class="label">Drifted</div></div>'
+        + '<div class="stat-card"><div class="value">' + rules.filter(function(r){return r.inVersionStore;}).length + '</div><div class="label">Versioned</div></div>'
+        + '</div>'
+        + '<div class="section-title">Recent changes</div>'
+        + '<div class="rule-list">' + (rows || '<div class="rule-row"><span class="rule-meta">No iRules found</span></div>') + '</div>'
+        + '<div class="poll-info"><span>Last refreshed: ' + new Date().toLocaleTimeString() + '</span>'
+        + '<span>' + drifted + ' rule' + (drifted !== 1 ? 's' : '') + ' with unversioned changes</span></div>';
+
+      document.getElementById('content').innerHTML = html;
+    }
+
+    function loadData() {
+      get('/rules', function (err, data) {
+        if (err) {
+          document.getElementById('content').innerHTML =
+            '<div class="error-msg">Failed to load iRule data: ' + err.message + '</div>';
+          return;
+        }
+        render(data.items || []);
+      });
+    }
+
+    loadData();
+    // Refresh every 60 seconds
+    setInterval(loadData, 60000);
+  </script>
+</body>
+</html>

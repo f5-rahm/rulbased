@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Cache-Control" content="no-store">
-  <title>iRule Versioner</title>
+  <title>Rülbased</title>
 
   <!--
     CodeMirror: loaded from vendor/ (bundled locally — BIG-IP management
@@ -485,8 +485,8 @@ span.CodeMirror-selectedtext { background: none; }
       box-shadow: 0 2px 6px rgba(0,0,0,0.35);
       z-index: 10;
     }
-    .logo { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; white-space: nowrap; }
-    .logo span { color: #60a5fa; }
+    .logo { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; white-space: nowrap; color: #ffffff; }
+    .logo span { color: #0072b0; font-style: italic; }
     .tagline { font-size: 11px; opacity: 0.5; }
     .spacer  { flex: 1; }
     .hdr-stats { display: flex; gap: 16px; font-size: 11px; opacity: 0.8; }
@@ -798,6 +798,87 @@ span.CodeMirror-selectedtext { background: none; }
       text-decoration-style: dotted;
       text-underline-offset: 2px;
     }
+
+    /* =======================================================================
+       Header — clickable logo
+    ======================================================================= */
+    #logo-home { cursor: pointer; user-select: none; }
+    #logo-home:hover span { opacity: 0.8; }
+
+    /* =======================================================================
+       Dashboard
+    ======================================================================= */
+    #dashboard-view { flex: 1 1 auto; overflow-y: auto; display: none;
+      background: var(--bg); }
+    #dashboard-view.active { display: block; }
+
+    #dashboard-body { max-width: 860px; margin: 0 auto; padding: 20px 20px 32px;
+      display: flex; flex-direction: column; gap: 16px; }
+
+    .db-card { background: var(--bg-panel); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 18px 20px; }
+    .db-card-title { font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 12px; }
+
+    /* Intro card */
+    .db-intro { display: flex; flex-direction: column; gap: 8px;
+      border-left: 4px solid var(--accent); }
+    .db-intro-logo { font-size: 22px; font-weight: 800; color: var(--text);
+      letter-spacing: -0.5px; }
+    .db-intro-logo span { color: #0072b0; font-style: italic; }
+    .db-intro-desc { font-size: 13px; color: var(--text-sub); line-height: 1.5;
+      max-width: 580px; }
+    .db-intro-divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+    .db-intro-meta { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+    .db-version-pill { font-size: 11px; font-weight: 600; font-family: monospace;
+      background: var(--accent-light); color: var(--accent);
+      padding: 2px 10px; border-radius: 10px; }
+
+    /* Health grid */
+    .db-health-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .db-stat { background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 14px; text-align: center; }
+    .db-stat-val { font-size: 28px; font-weight: 800; color: var(--text);
+      line-height: 1; font-family: "SFMono-Regular", Consolas, monospace; }
+    .db-stat-val.db-stat-drift { color: var(--warning); }
+    .db-stat-lbl { font-size: 10px; color: var(--text-muted); margin-top: 4px;
+      text-transform: uppercase; letter-spacing: 0.4px; }
+
+    /* Activity feed */
+    #db-activity-list { display: flex; flex-direction: column; gap: 6px; }
+    .db-act-row { display: flex; align-items: flex-start; gap: 10px;
+      padding: 9px 12px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); font-size: 12px;
+      transition: border-color 0.15s; cursor: pointer; }
+    .db-act-row:hover { border-color: var(--accent); }
+    .db-act-badge { flex: 0 0 auto; }
+    .db-act-main { flex: 1; min-width: 0; }
+    .db-act-rule { font-family: monospace; font-size: 11.5px; font-weight: 600;
+      color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .db-act-reason { font-size: 11px; color: var(--text-sub); margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .db-act-meta { flex: 0 0 auto; text-align: right; font-size: 10px;
+      color: var(--text-muted); white-space: nowrap; }
+    .db-act-author { font-weight: 600; }
+    .db-act-empty { text-align: center; padding: 20px; color: var(--text-muted);
+      font-size: 12px; }
+
+    /* Feature list */
+    .db-feature-list { margin: 0; padding-left: 0; list-style: none;
+      display: flex; flex-direction: column; gap: 8px; }
+    .db-feature-list li { font-size: 13px; color: var(--text-sub); line-height: 1.5;
+      padding-left: 14px; position: relative; }
+    .db-feature-list li::before { content: "—"; position: absolute; left: 0;
+      color: var(--accent); font-weight: 700; }
+    .db-feature-list li strong { color: var(--text); font-weight: 600; }
+
+    /* Changelog */
+    .db-cl-list { display: flex; flex-direction: column; gap: 14px; }
+    .db-cl-entry { border-left: 3px solid var(--border); padding-left: 14px; }
+    .db-cl-ver { font-size: 12px; font-weight: 700; font-family: monospace;
+      color: var(--accent); margin-bottom: 5px; }
+    .db-cl-items { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+    .db-cl-items li { font-size: 12px; color: var(--text-sub); line-height: 1.4; }
   </style>
 </head>
 
@@ -808,8 +889,7 @@ span.CodeMirror-selectedtext { background: none; }
        Header
   ================================================================== -->
   <div id="header">
-    <div class="logo">iRule <span>Versioner</span></div>
-    <div class="tagline">BIG-IP iApps LX</div>
+    <div class="logo" id="logo-home" title="Back to dashboard">Rül<span>based</span></div>
     <div class="spacer"></div>
     <div class="hdr-stats">
       Tracked: <span class="sv" id="s-tracked">—</span>
@@ -842,7 +922,114 @@ span.CodeMirror-selectedtext { background: none; }
     <!-- Right: detail -->
     <div id="right-panel">
 
-      <div id="empty-state">
+      <!-- Dashboard — shown on load and when header title is clicked -->
+      <div id="dashboard-view">
+        <div id="dashboard-body">
+
+          <!-- Intro card -->
+          <div class="db-card db-intro">
+            <div class="db-intro-logo">Rül<span>based</span></div>
+            <div class="db-intro-desc">
+              Rülbased brings version control to BIG-IP iRules natively, running entirely
+              on-device as an iApps LX extension with no external dependencies. Every change
+              to every iRule is automatically detected and snapshotted — whether made through
+              the GUI, VS Code, or any other tool — giving you a complete, timestamped history
+              of your traffic policy.
+            </div>
+            <div class="db-intro-divider"></div>
+            <ul class="db-feature-list">
+              <li><strong>Automatic change detection</strong> — polls the running config and snapshots any iRule that drifted from its last known state, regardless of how the change was made</li>
+              <li><strong>Side-by-side diff viewer</strong> — line-level comparison between any two versions before you commit to a deployment or rollback</li>
+              <li><strong>Two-step deploy with mandatory reason</strong> — every change requires a typed justification; nothing deploys without an audit trail entry</li>
+              <li><strong>Full version history per iRule</strong> — browse, compare, and restore any prior version across all partitions</li>
+              <li><strong>Configurable retention policies</strong> — keep unlimited history, cap by count, or age out older versions per iRule</li>
+              <li><strong>Built-in audit log</strong> — append-only record of every deploy, rollback, snapshot, and externally-detected change with author, timestamp, and reason</li>
+            </ul>
+            <div class="db-intro-meta">
+              <span class="db-version-pill">v1.0.0</span>
+            </div>
+          </div>
+
+          <!-- Health summary -->
+          <div class="db-card db-health">
+            <div class="db-card-title">System Health</div>
+            <div class="db-health-grid">
+              <div class="db-stat">
+                <div class="db-stat-val" id="db-s-tracked">—</div>
+                <div class="db-stat-lbl">Rules tracked</div>
+              </div>
+              <div class="db-stat">
+                <div class="db-stat-val db-stat-drift" id="db-s-drift">—</div>
+                <div class="db-stat-lbl">Drifted</div>
+              </div>
+              <div class="db-stat">
+                <div class="db-stat-val" id="db-s-versioned">—</div>
+                <div class="db-stat-lbl">With history</div>
+              </div>
+              <div class="db-stat">
+                <div class="db-stat-val" id="db-s-unversioned">—</div>
+                <div class="db-stat-lbl">Not yet tracked</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent activity -->
+          <div class="db-card db-activity">
+            <div class="db-card-title">Recent Activity</div>
+            <div id="db-activity-list"><div class="loading-row">Loading…</div></div>
+          </div>
+
+          <!-- Changelog -->
+          <div class="db-card db-changelog">
+            <div class="db-card-title">Changelog</div>
+            <div class="db-cl-list">
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v1.0.0</div>
+                <ul class="db-cl-items">
+                  <li>Dashboard homepage with system health and recent activity feed</li>
+                  <li>Header rebranded to "iRules Versioning"; clicking title returns to dashboard</li>
+                  <li>Configurable dashboard activity limit (Settings → Dashboard activity limit)</li>
+                  <li>Package changelog panel</li>
+                </ul>
+              </div>
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v0.3.0</div>
+                <ul class="db-cl-items">
+                  <li>iRules-aware syntax highlighting overlay (events in F5 red, namespace commands in jade green)</li>
+                  <li>Click-to-docs on iRules events, namespace commands, and standard TCL commands</li>
+                  <li>Independent toggles for iRules links and TCL man page links</li>
+                  <li>Debug logging toggle; settings loaded on page startup</li>
+                </ul>
+              </div>
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v0.2.0</div>
+                <ul class="db-cl-items">
+                  <li>Full-page master-detail SPA with searchable rule list</li>
+                  <li>History tab: version timeline, side-by-side diff, checkbox compare</li>
+                  <li>Inline CodeMirror TCL editor with Save &amp; Deploy flow</li>
+                  <li>Two-step deploy/rollback with mandatory reason field</li>
+                  <li>Audit log tab with pagination</li>
+                  <li>In-GUI toast notifications</li>
+                </ul>
+              </div>
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v0.1.0</div>
+                <ul class="db-cl-items">
+                  <li>Installable RPM scaffold for BIG-IP iApps LX</li>
+                  <li>Automatic baseline snapshots on first install</li>
+                  <li>Scheduled poll-based external change detection</li>
+                  <li>REST API: list rules, version history, diff, snapshot, deploy</li>
+                  <li>Embedded summary widget in TMUI</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /dashboard-body -->
+      </div><!-- /dashboard-view -->
+
+      <!-- Empty state (rule selected but nothing shown yet — transitional) -->
+      <div id="empty-state" style="display:none">
         <div class="empty-icon">📋</div>
         <p style="font-size:14px">Select an iRule to view its history</p>
       </div>
@@ -933,6 +1120,13 @@ span.CodeMirror-selectedtext { background: none; }
         <div class="s-row">
           <label for="s-poll">Poll interval (s, 0 = off)</label>
           <input id="s-poll" type="number" min="0" max="86400" step="30" value="300">
+        </div>
+      </div>
+      <div class="s-section">
+        <h3>Dashboard</h3>
+        <div class="s-row">
+          <label for="s-dblimit">Activity feed entries</label>
+          <input id="s-dblimit" type="number" min="5" max="100" step="5" value="15">
         </div>
       </div>
       <div class="s-section">
@@ -1621,7 +1815,8 @@ var S = {
   viewerCM:   null, // view-modal CodeMirror instance
   editMode:   false,
   deployPend: null, // { hash, fromHash }
-  settings:   {}
+  settings:   {},
+  view:       'dashboard'  // 'dashboard' | 'rule'
 };
 
 /* --------------------------------------------------------------------------
@@ -1718,6 +1913,8 @@ function loadRuleList() {
     document.getElementById('s-tracked').textContent = S.rules.length;
     document.getElementById('s-drift').textContent   = drifted;
     renderList();
+    // Refresh dashboard health stats if on dashboard
+    if (S.view === 'dashboard') { renderDashboardHealth(); }
   });
 }
 
@@ -1776,12 +1973,14 @@ function makeRuleRow(r) {
 -------------------------------------------------------------------------- */
 function selectRule(r) {
   S.rule      = r;
+  S.view      = 'rule';
   S.editMode  = false;
   S.checked   = [];
   S.versions  = [];
 
   renderList();
 
+  document.getElementById('dashboard-view').classList.remove('active');
   document.getElementById('empty-state').style.display  = 'none';
   document.getElementById('detail-header').style.display = 'block';
   document.getElementById('tabs').style.display          = 'flex';
@@ -2271,6 +2470,118 @@ function renderAuditPag() {
 }
 
 /* --------------------------------------------------------------------------
+   Dashboard
+-------------------------------------------------------------------------- */
+function showDashboard() {
+  S.view = 'dashboard';
+  S.rule = null;
+
+  // Hide rule-detail chrome
+  document.getElementById('detail-header').style.display = 'none';
+  document.getElementById('tabs').style.display          = 'none';
+  document.querySelectorAll('.tab-panel').forEach(function (p) {
+    p.classList.remove('active');
+  });
+
+  // Deselect any highlighted row in the rule list
+  document.querySelectorAll('.rule-row.active').forEach(function (el) {
+    el.classList.remove('active');
+  });
+
+  // Show dashboard
+  document.getElementById('dashboard-view').classList.add('active');
+
+  // Populate health from already-loaded rules (instant), then fetch activity
+  renderDashboardHealth();
+  loadDashboardActivity();
+}
+
+function renderDashboardHealth() {
+  var rules      = S.rules;
+  var drifted    = rules.filter(function (r) { return r.drifted; }).length;
+  var versioned  = rules.filter(function (r) { return r.inVersionStore; }).length;
+  var unversioned = rules.length - versioned;
+
+  document.getElementById('db-s-tracked').textContent    = rules.length;
+  document.getElementById('db-s-drift').textContent      = drifted;
+  document.getElementById('db-s-versioned').textContent  = versioned;
+  document.getElementById('db-s-unversioned').textContent = unversioned;
+}
+
+function loadDashboardActivity() {
+  var limit = (S.settings.dashboardAuditLimit || 15);
+  var el    = document.getElementById('db-activity-list');
+  el.innerHTML = '<div class="loading-row">Loading…</div>';
+
+  GET('/rules/audit?limit=' + limit, function (err, data) {
+    if (err) {
+      el.innerHTML = '<div class="db-act-empty">Could not load activity log.</div>';
+      return;
+    }
+    var items = (data && data.items) || [];
+    if (!items.length) {
+      el.innerHTML = '<div class="db-act-empty">No activity recorded yet. Deploy or snapshot an iRule to get started.</div>';
+      return;
+    }
+    renderDashboardActivity(items);
+  });
+}
+
+function renderDashboardActivity(entries) {
+  var el = document.getElementById('db-activity-list');
+  el.innerHTML = '';
+
+  var actionBadge = {
+    'deploy':                  ['b-deploy',   'Deploy'],
+    'rollback':                ['b-rollback',  'Rollback'],
+    'external-change-detected':['b-ext',      'Ext. Change'],
+    'github-pull':             ['b-github',   'GitHub Pull'],
+    'github-push':             ['b-github',   'GitHub Push'],
+    'snapshot':                ['b-snap',     'Snapshot'],
+    'baseline':                ['b-ok',       'Baseline']
+  };
+
+  entries.forEach(function (entry) {
+    var badgeInfo = actionBadge[entry.action] || ['b-ok', entry.action];
+    var row = document.createElement('div');
+    row.className = 'db-act-row';
+
+    // If we can find the rule in S.rules, make the row clickable
+    var matchRule = null;
+    if (entry.rule) {
+      for (var i = 0; i < S.rules.length; i++) {
+        if (S.rules[i].fullPath === entry.rule) { matchRule = S.rules[i]; break; }
+      }
+    }
+    if (matchRule) {
+      row.title = 'Go to ' + entry.rule;
+      (function (r) {
+        row.onclick = function () { selectRule(r); };
+      })(matchRule);
+    } else {
+      row.style.cursor = 'default';
+    }
+
+    var hashInfo = '';
+    if (entry.toHash)   { hashInfo += '<span class="mono">' + esc(entry.toHash)   + '</span>'; }
+    if (entry.fromHash) { hashInfo = '<span class="mono" style="opacity:0.6">' + esc(entry.fromHash) + '</span> → ' + hashInfo; }
+
+    row.innerHTML =
+      '<div class="db-act-badge"><span class="badge ' + badgeInfo[0] + '">' + badgeInfo[1] + '</span></div>' +
+      '<div class="db-act-main">' +
+        '<div class="db-act-rule">' + esc(entry.rule || '—') + (hashInfo ? ' <span style="font-weight:400;color:var(--text-muted)">' + hashInfo + '</span>' : '') + '</div>' +
+        (entry.reason ? '<div class="db-act-reason">' + esc(entry.reason) + '</div>' : '') +
+      '</div>' +
+      '<div class="db-act-meta">' +
+        '<div class="db-act-author">' + esc(entry.author || '') + '</div>' +
+        '<div>' + esc(relTime(entry.ts)) + '</div>' +
+      '</div>';
+
+    el.appendChild(row);
+  });
+}
+
+/* --------------------------------------------------------------------------
    Settings
 -------------------------------------------------------------------------- */
 function openSettings() {
@@ -2281,6 +2592,7 @@ function openSettings() {
     }
     var s = S.settings;
     document.getElementById('s-poll').value        = s.pollIntervalSeconds || 300;
+    document.getElementById('s-dblimit').value     = s.dashboardAuditLimit || 15;
     document.getElementById('s-syslog').checked    = !!s.syslogEnabled;
     document.getElementById('s-webhook').value     = s.webhookUrl || '';
     document.getElementById('s-wsecret').value     = '';
@@ -2295,21 +2607,23 @@ function closeSettings() { document.getElementById('settings-overlay').style.dis
 
 function saveSettings() {
   var p = {
-    pollIntervalSeconds: parseInt(document.getElementById('s-poll').value, 10) || 300,
-    syslogEnabled:       document.getElementById('s-syslog').checked,
-    webhookUrl:          document.getElementById('s-webhook').value.trim(),
-    iruleLinks:          document.getElementById('s-irulelinks').checked,
-    tclManPageLinks:     document.getElementById('s-tcllinks').checked,
-    debugMode:           document.getElementById('s-debug').checked
+    pollIntervalSeconds:  parseInt(document.getElementById('s-poll').value, 10) || 300,
+    dashboardAuditLimit:  Math.max(5, parseInt(document.getElementById('s-dblimit').value, 10) || 15),
+    syslogEnabled:        document.getElementById('s-syslog').checked,
+    webhookUrl:           document.getElementById('s-webhook').value.trim(),
+    iruleLinks:           document.getElementById('s-irulelinks').checked,
+    tclManPageLinks:      document.getElementById('s-tcllinks').checked,
+    debugMode:            document.getElementById('s-debug').checked
   };
   var sec = document.getElementById('s-wsecret').value;
   if (sec) { p.webhookSecret = sec; }
   PUT('/settings', p, function (err) {
     if (err) { toast('error', 'Save failed', String(err)); }
     else {
-      S.settings.iruleLinks      = p.iruleLinks;
-      S.settings.tclManPageLinks = p.tclManPageLinks;
-      S.settings.debugMode       = p.debugMode;
+      S.settings.iruleLinks          = p.iruleLinks;
+      S.settings.tclManPageLinks     = p.tclManPageLinks;
+      S.settings.debugMode           = p.debugMode;
+      S.settings.dashboardAuditLimit = p.dashboardAuditLimit;
       _applyEditorSettings();
       toast('success', 'Settings saved');
       closeSettings();
@@ -2488,6 +2802,9 @@ document.addEventListener('DOMContentLoaded', function () {
     if (e.target === this) { this.classList.remove('open'); }
   };
 
+  // Header logo → back to dashboard
+  document.getElementById('logo-home').onclick = function () { showDashboard(); };
+
   // Settings
   document.getElementById('btn-sclose').onclick  = closeSettings;
   document.getElementById('btn-scancel').onclick = closeSettings;
@@ -2512,6 +2829,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     _applyEditorSettings();
     loadRuleList();
+    showDashboard();
   });
 });
 
