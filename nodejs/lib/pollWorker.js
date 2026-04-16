@@ -3,6 +3,7 @@
 var bigipClient = require('./bigipClient');
 var tmsh = require('./tmsh');  // retained for future write operations in poll
 var versionStore = require('./versionStore');
+var notifier = require('./notifier');
 var logger = require('./logger');
 
 /**
@@ -120,7 +121,19 @@ function _poll() {
                 fromHash: latest.hash,
                 toHash: liveHash,
                 reason: 'Detected by scheduled poll'
-              }, function () { next(); });
+              }, function () {
+                notifier.emit({
+                  action:    'external-change-detected',
+                  rule:      rule.fullPath,
+                  fromHash:  latest.hash,
+                  toHash:    liveHash,
+                  author:    'external',
+                  reason:    'Detected by scheduled poll',
+                  timestamp: new Date().toISOString(),
+                  isDrift:   true
+                }, _dataDir, versionStore.appendAudit);
+                next();
+              });
             }
           );
         } else {

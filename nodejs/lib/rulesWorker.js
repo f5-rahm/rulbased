@@ -4,6 +4,7 @@ var versionStore = require('./versionStore');
 var bigipClient = require('./bigipClient');
 var logger = require('./logger');
 var settings = require('./settings');
+var notifier = require('./notifier');
 var fs = require('fs');
 var path = require('path');
 
@@ -369,6 +370,15 @@ function _manualSnapshot(dataDir, partition, name, body, restOperation) {
             reason: message
           };
           versionStore.appendAudit(dataDir, auditEntry, function () {
+            notifier.emit({
+              action:    'deploy',
+              rule:      '/' + partition + '/' + name,
+              fromHash:  null,
+              toHash:    version ? version.hash : null,
+              author:    author,
+              reason:    message,
+              timestamp: auditEntry.ts
+            }, dataDir, versionStore.appendAudit);
             restOperation.setStatusCode(201);
             restOperation.setBody({ version: version, deployed: true });
             restOperation.complete();
@@ -555,6 +565,15 @@ function _deployVersion(dataDir, partition, name, body, restOperation) {
                 reason: reason
               };
               versionStore.appendAudit(dataDir, auditEntry, function () {
+                notifier.emit({
+                  action:    auditEntry.action,
+                  rule:      lockKey,
+                  fromHash:  null,
+                  toHash:    hash,
+                  author:    author,
+                  reason:    reason,
+                  timestamp: auditEntry.ts
+                }, dataDir, versionStore.appendAudit);
                 _finishTask(task, lockKey, null, { deployed: hash, version: version || null, audit: auditEntry });
               });
             });

@@ -20,6 +20,7 @@ var _defaults = {
   syslogEnabled: true,
   webhookUrl: '',
   webhookSecret: '',
+  webhookOnDrift: false,
   iruleLinks: true,
   tclManPageLinks: true,
   debugMode: false,

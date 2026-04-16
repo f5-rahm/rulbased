@@ -1143,6 +1143,17 @@ span.CodeMirror-selectedtext { background: none; }
           <label for="s-wsecret">Webhook HMAC secret</label>
           <input id="s-wsecret" type="password" placeholder="optional" style="width:200px">
         </div>
+        <div class="s-row">
+          <label for="s-webhookdrift">Webhook on drift events</label>
+          <input id="s-webhookdrift" type="checkbox">
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          When off, webhooks fire only on deploy/rollback — not on externally-detected changes.
+        </div>
+        <div class="s-row" style="margin-top:10px">
+          <label></label>
+          <button id="btn-test-webhook" style="font-size:12px;padding:4px 10px">Test Webhook</button>
+        </div>
       </div>
       <div class="s-section">
         <h3>Editor</h3>
@@ -2596,6 +2607,7 @@ function openSettings() {
     document.getElementById('s-syslog').checked    = !!s.syslogEnabled;
     document.getElementById('s-webhook').value     = s.webhookUrl || '';
     document.getElementById('s-wsecret').value     = '';
+    document.getElementById('s-webhookdrift').checked = !!s.webhookOnDrift;
     document.getElementById('s-irulelinks').checked = !!s.iruleLinks;
     document.getElementById('s-tcllinks').checked  = !!s.tclManPageLinks;
     document.getElementById('s-debug').checked     = !!s.debugMode;
@@ -2605,12 +2617,33 @@ function openSettings() {
 
 function closeSettings() { document.getElementById('settings-overlay').style.display = 'none'; }
 
+function testWebhook() {
+  var btn = document.getElementById('btn-test-webhook');
+  var origText = btn.textContent;
+  btn.textContent = 'Sending…';
+  btn.disabled = true;
+  GET('/settings/test-webhook', function (err, data) {
+    btn.textContent = origText;
+    btn.disabled = false;
+    if (err) {
+      toast('error', 'Webhook test failed', String(err));
+      return;
+    }
+    if (data && data.ok) {
+      toast('success', 'Webhook delivered', 'Test POST accepted by remote endpoint.');
+    } else {
+      toast('error', 'Webhook test failed', (data && data.error) ? data.error : 'Unknown error');
+    }
+  });
+}
+
 function saveSettings() {
   var p = {
     pollIntervalSeconds:  parseInt(document.getElementById('s-poll').value, 10) || 300,
     dashboardAuditLimit:  Math.max(5, parseInt(document.getElementById('s-dblimit').value, 10) || 15),
     syslogEnabled:        document.getElementById('s-syslog').checked,
     webhookUrl:           document.getElementById('s-webhook').value.trim(),
+    webhookOnDrift:       document.getElementById('s-webhookdrift').checked,
     iruleLinks:           document.getElementById('s-irulelinks').checked,
     tclManPageLinks:      document.getElementById('s-tcllinks').checked,
     debugMode:            document.getElementById('s-debug').checked
@@ -2809,6 +2842,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btn-sclose').onclick  = closeSettings;
   document.getElementById('btn-scancel').onclick = closeSettings;
   document.getElementById('btn-ssave').onclick   = saveSettings;
+  document.getElementById('btn-test-webhook').onclick = testWebhook;
   document.getElementById('settings-overlay').onclick = function (e) {
     if (e.target === this) { closeSettings(); }
   };

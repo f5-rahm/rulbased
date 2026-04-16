@@ -15,10 +15,10 @@ along the lines of:
 > I am building an iApps LX extension for BIG-IP called "Rülbased".
 > The attached PLANNING.md contains all spec decisions, data models, REST API
 > definitions, GUI specifications, and the current implementation status.
-> Phase 4 is complete. Please read the planning doc and help me continue with
-> Phase 5.
+> Phase 5 is complete. Please read the planning doc and help me continue with
+> Phase 6 (import/export + upgrade hardiness).
 
-Upload both this file and the phase source zip (`irule-versioner-phase4.zip`)
+Upload both this file and the phase source zip (`irule-versioner-phase5.zip`)
 to give the new session full context.
 
 ---
@@ -105,7 +105,13 @@ bash -n "$OUTFILE" && echo "syntax OK"
 - **`chmod 420`** is decimal for octal `0644`. Never use `0o644` — Node 6
   on BIG-IP does not support ES6 octal literals and silently treats them as 0.
 
-### Deployment
+### During-phase iteration
+
+While iterating within a phase — fixing bugs, adjusting behaviour, responding
+to real-device test results — **share only the patch shell script** (`patch-phaseN.sh`
+or `patch-phaseNb.sh` etc.). Do not repackage the full project zip until the
+phase is complete and all on-device tests pass. The zip is the end-of-phase
+deliverable; the patch script is the iteration tool.
 
 ```bash
 scp patch-phaseN.sh root@<bigip>:/tmp/
@@ -381,8 +387,8 @@ the existing BIG-IP admin session cookie — no separate credentials.
 | GET | `/rules/:partition/:name/diff?from=:hash&to=:hash` | 1 | Side-by-side diff payload |
 | PUT | `/rules/:partition/:name/retention` | 2 | Update retention policy `{ policy, max }` |
 | GET | `/audit` | 2 | Paginated audit log `?rule=&limit=&offset=` |
-| POST | `/export` | 5 | Trigger tar.gz export of full version store |
-| POST | `/import` | 5 | Import a tar.gz version store archive |
+| POST | `/export` | 6 | Trigger tar.gz export of full version store |
+| POST | `/import` | 6 | Import a tar.gz version store archive |
 
 ### Settings worker (`/settings`)
 
@@ -391,17 +397,17 @@ the existing BIG-IP admin session cookie — no separate credentials.
 | GET | `/settings` | 1 | Read all global settings (credentials masked) |
 | PUT | `/settings` | 1 | Update global settings |
 
-### GitHub worker (`/github`) — Phase 5
+### GitHub worker (`/github`) — Phase 9 (optional)
 
 | Method | Path | Phase | Description |
 |--------|------|-------|-------------|
-| GET | `/github/status` | 5 | Connection status, auth method, last sync time |
-| POST | `/github/test` | 5 | Test GitHub connectivity and credentials |
-| GET | `/github/browse?repo=:repo&path=:path&branch=:branch` | 5 | Browse repo contents (file picker in GUI) |
-| POST | `/rules/:partition/:name/github/link` | 5 | Link rule to a GitHub file `{ repo, path, branch, type }` |
-| DELETE | `/rules/:partition/:name/github/link` | 5 | Unlink rule from GitHub |
-| POST | `/rules/:partition/:name/github/pull` | 5 | Pull from GitHub, render template if needed |
-| POST | `/rules/:partition/:name/github/push` | 5 | Push current live version to GitHub |
+| GET | `/github/status` | 9 | Connection status, auth method, last sync time |
+| POST | `/github/test` | 9 | Test GitHub connectivity and credentials |
+| GET | `/github/browse?repo=:repo&path=:path&branch=:branch` | 9 | Browse repo contents (file picker in GUI) |
+| POST | `/rules/:partition/:name/github/link` | 9 | Link rule to a GitHub file `{ repo, path, branch, type }` |
+| DELETE | `/rules/:partition/:name/github/link` | 9 | Unlink rule from GitHub |
+| POST | `/rules/:partition/:name/github/pull` | 9 | Pull from GitHub, render template if needed |
+| POST | `/rules/:partition/:name/github/push` | 9 | Push current live version to GitHub |
 
 ### Response shapes
 
@@ -524,7 +530,7 @@ config processor via `fetch()` calls to `/mgmt/shared/irule-versioner/`.
   7. Success: toast notification + history list refreshes + "current" badge moves
   8. Failure: error modal with tmsh error message
 
-#### Right panel — GitHub tab (Phase 5)
+#### Right panel — GitHub tab (Phase 9 — optional)
 
 - Link status: Linked / Unlinked / Diverged
 - If unlinked: "Link to GitHub" flow with repo browser (file picker)
@@ -854,49 +860,85 @@ Deliverables completed:
 
 ---
 
-### Phase 5 — Syslog + webhook notifications (1–2 weeks)
+### Phase 5 — Syslog + webhook notifications ✅ COMPLETE
 
-Deliverables:
-- Syslog emission via `tmsh log local0.notice` from config processor on
-  deploy/rollback/drift events
-- Webhook HTTP POST from Node.js `http`/`https` module (no external deps)
-- Optional HMAC-SHA256 `X-Hub-Signature-256` header when `webhookSecret` is set
-- Settings page in GUI: poll interval, syslog toggle, webhook URL + secret
-- "Test webhook" button in settings (sends a test POST)
-- Webhook retry logic: 3 attempts with 5s backoff, failure logged to audit
+**Status:** Implemented and validated on BIG-IP TMOS 21.x.
+
+Deliverables completed:
+- `lib/notifier.js` — new module; `emit()` fires syslog and/or webhook on
+  deploy/rollback/drift events; `testSyslog()` and `testWebhook()` for
+  diagnostic endpoints
+- **Dual syslog destinations:**
+  - `/var/log/ltm` — operational entry via `local0.notice`, tag `rulbased`,
+    format `rulbased: [action] rule=... to=... author=... reason=...`
+  - `/var/log/audit` — security/compliance entry via `local0.info` with `AUDIT`
+    token in message body, format `AUDIT - user <author> - RAW: rulbased: action=...`
+    Matches native BIG-IP audit entry format for SIEM/auditor compatibility.
+    Only fires for `deploy`, `rollback`, `external-change-detected` — not `test`.
+- Webhook HTTP/HTTPS POST with optional HMAC-SHA256 `X-Hub-Signature-256`
+  header; 3 attempts with 5s async `setTimeout` backoff; total failure written
+  to audit log as `webhook-failed` action
+- `webhookOnDrift` setting (default `false`) — gates webhook independently on
+  external-change events; syslog always fires on drift when `syslogEnabled`
+- `GET /settings/test-syslog` — fires test entries to both `/var/log/ltm` and
+  `/var/log/audit`; returns `{ ok, error? }` with stderr on failure
+- `GET /settings/test-webhook` — fires a test POST to the configured URL;
+  returns `{ ok, error? }`
+- Settings panel additions: webhook-on-drift checkbox, Test Webhook button,
+  hint text explaining drift gate behaviour
+- Syslog tag rebranded from `irule-versioner` to `rulbased` (ASCII — umlaut
+  not valid in syslog tag fields)
+
+**Lessons learned from real-device testing (TMOS 21.x):**
+
+- **`tmsh log` is not a valid tmsh subcommand.** Use
+  `/usr/bin/logger -p <facility>.<severity> -t <tag> <message>` for syslog
+  emission from restnoded workers. Pass the message as a separate argv element
+  — no shell quoting issues regardless of content.
+
+- **syslog-ng routing to `/var/log/audit` requires BOTH `facility(local0)` AND
+  `message("AUDIT")`** — both conditions in `filter f_audit` must be satisfied.
+  `local3` routes to `/var/log/asm` (ASM module log), not audit. The `AUDIT`
+  token in the message body alone is not sufficient — the facility must also be
+  `local0`. Confirmed by reading `/etc/syslog-ng/syslog-ng.conf` directly.
+
+- **`/var/log/ltm` uses `local0.notice`; `/var/log/audit` uses `local0.info`.**
+  Both are `local0` facility, routed by the message content. The `AUDIT` token
+  gates the audit destination; the absence of `AUDIT` keeps the LTM entry out
+  of `/var/log/audit`.
+
+- **restnoded rejects bodyless POSTs at the framework pipeline level before
+  `onPost` is called.** Trigger-style endpoints with no request body must use
+  GET. This is the same class of issue as the two-argument `onStart` — the
+  framework enforces the contract silently with no error message.
+
+- **restnoded does not append a newline to JSON responses.** curl output runs
+  directly into the shell prompt and can appear invisible. Always add `-w "\n"`
+  when testing: `curl -sk -u admin: <url> -w "\n"`.
+
+- **Syslog tag must be ASCII.** The product is branded "Rülbased" but the
+  syslog tag is `rulbased` — syslog tag fields are process names and do not
+  support non-ASCII characters. The umlaut lives in the GUI only.
+
+- **The package directory name and URL path (`irule-versioner`) are deferred
+  to Phase 8 (rename).** Changing these requires a full RPM rebuild, reinstall,
+  and data directory migration. All feature phases (6, 7) will continue using
+  the existing path; Phase 8 is a dedicated rename-and-rebrand flag day.
+
+- **During-phase iteration: share only the patch script, not the full zip.**
+  The full project zip is the end-of-phase deliverable. During bug-fix
+  iterations within a phase, generate and share only the focused patch script
+  (`patch-phaseNb.sh` etc.) to avoid regenerating large zips unnecessarily.
 
 ---
 
-### Phase 6 — GitHub integration (3–4 weeks)
-
-Deliverables:
-- `githubWorker.js` — new iControl LX worker registered at `/github`
-- GitHub REST API v3 client in `lib/githubClient.js` (built-ins only: `https`)
-- PAT auth: Bearer token in `Authorization` header
-- GitHub App auth: JWT generation using RS256 (implement without `jsonwebtoken`
-  library — use Node.js `crypto` module directly), exchange for installation
-  access token, cache token with expiry
-- GET `/github/status` and POST `/github/test`
-- GET `/github/browse` — repo file tree for GUI file picker
-- Link/unlink endpoints
-- Pull flow: fetch file content (base64 decode), detect static vs template,
-  render `{{variables}}`, show diff, confirm, snapshot
-- Push flow: read live content, base64 encode, PUT to GitHub Contents API
-  (requires previous file SHA for conflict detection)
-- Conflict detection: compare stored `remoteSha` against current GitHub SHA
-- Template variable substitution with allowlist sanitisation
-- Per-device variable map editor in GitHub tab
-- GitHub tab in full-page GUI
-
----
-
-### Phase 7 — Import/export + upgrade hardiness (2 weeks)
+### Phase 6 — Import/export + upgrade hardiness (2 weeks)
 
 **Background — BIG-IP upgrade behaviour:**
 After a TMOS version upgrade, the entire `/var/config/rest/iapps/` directory
 is wiped — both the RPM-managed code *and* the `data/` subdirectory containing
 all version history. The RPM simply needs reinstalling, but the `data/`
-directory is the irreplaceable part. Until Phase 7's import/export is
+directory is the irreplaceable part. Until Phase 6's import/export is
 implemented, operators should back up `data/` to the `/shared/` partition
 (which persists across upgrades) before any TMOS upgrade:
 
@@ -910,7 +952,7 @@ tar -xzf /shared/rulbased-data-backup-<date>.tar.gz -C /
 bigstart restart restnoded
 ```
 
-This manual procedure is what Phase 7 will automate and surface in the GUI.
+This manual procedure is what Phase 6 will automate and surface in the GUI.
 
 Deliverables:
 - POST `/export` — streams a tar.gz of the full data directory
@@ -929,7 +971,67 @@ Deliverables:
 
 ---
 
-## Key implementation risks and mitigations
+### Phase 7 — Package rename: irule-versioner → rulbased
+
+**Background — why deferred:**
+The package directory name (`irule-versioner`) and all worker URL paths
+(`/mgmt/shared/irule-versioner/...`) are baked into the RPM spec and every
+`WORKER_URI_PATH` constant. Changing them is a flag day — full RPM rebuild,
+reinstall, and data directory migration. All feature phases (6) continue
+using the existing paths. Phase 7 is a single dedicated rename-and-rebrand
+operation performed after all features are complete and validated.
+
+**Scope — everything that must change atomically:**
+
+Code:
+- `WORKER_URI_PATH` in `rulesWorker.js`, `settingsWorker.js`, `uiWorker.js`,
+  `configProcessor.js` — change `shared/irule-versioner/...` to `shared/rulbased/...`
+- `onStart` data directory hardcoded path in `rulesWorker.js`:
+  `/var/config/rest/iapps/irule-versioner/data` → `/var/config/rest/iapps/rulbased/data`
+- `versionStore.js` and any other module with the old path hardcoded
+- All `BASE` references in build scripts and patch scripts
+
+RPM:
+- RPM `Name:` field in the spec: `irule-versioner` → `rulbased`
+- RPM `%files` section paths
+- Package install/uninstall curl commands in `install-rpm.sh`
+
+Data migration (on-device, run once):
+```bash
+# 1. Stop restnoded
+bigstart stop restnoded
+
+# 2. Move the data directory to preserve all version history
+mv /var/config/rest/iapps/irule-versioner/data \
+   /var/config/rest/iapps/rulbased/data   # after RPM installs the new package
+
+# Alternatively, if old RPM is still installed alongside new:
+cp -a /var/config/rest/iapps/irule-versioner/data \
+      /var/config/rest/iapps/rulbased/data
+
+# 3. Install new RPM, start restnoded
+bigstart start restnoded
+```
+
+`lib/migrations.js` (Phase 6) will include a startup check that detects the
+old data path and offers a one-click migration in the settings page.
+
+GUI and docs:
+- All `irule-versioner` references in `app.html`, `index.html` (API base URL,
+  any hardcoded paths)
+- README — all URL examples, curl commands, file path references
+- PLANNING.md — resuming section, file structure, all path references
+- `block_template.json` if it contains the old name
+
+**New URL after rename:**
+```
+https://<bigip>/mgmt/shared/rulbased/ui
+```
+
+**Grep to find all remaining references before cutting the rename patch:**
+```bash
+grep -r "irule-versioner" nodejs/ presentation/ build/ --include="*.js" --include="*.html" --include="*.sh" -l
+```
 
 | Risk | Mitigation |
 |------|------------|
@@ -939,10 +1041,10 @@ Deliverables:
 | Poll worker stacking during failover | Already mitigated: single-flight `_running` boolean lock in `pollWorker.js` |
 | Large iRule content exceeding REST response buffer | iControl REST returns full `apiAnonymous` content in a single JSON response; BIG-IP enforces a 32MB response limit which is far above any realistic iRule size |
 | localhost:8100 trusted channel unavailable | Only occurs if restjavad is not running (system startup/failover). `bigipClient.js` surfaces a clear ECONNREFUSED error; the poll worker's single-flight lock prevents cascading failures |
-| GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI |
-| Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution |
+| GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI (Phase 9 — optional) |
+| Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution (Phase 9 — optional) |
 | CodeMirror bundle size | Inlined directly into `app.html` as `<script>`/`<style>` blocks (~187KB). No vendor file requests. CDN not used. `bundle-codemirror.sh` available if separate vendor files are needed for RPM size reasons. |
-| BIG-IP management plane has no outbound internet | GitHub integration (Phase 5) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
+| BIG-IP management plane has no outbound internet | GitHub integration (Phase 9 — optional) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
 | Concurrent deploys to the same iRule | Add per-rule deploy lock in Phase 2 (simple in-memory Map of `<fullPath> → boolean`) |
 
 ---
@@ -960,18 +1062,19 @@ irule-versioner/
 │   └── lib/
 │       ├── configProcessor.js     ← block lifecycle: BINDING → BOUND ✅
 │       ├── rulesWorker.js         ← REST: /rules (Phase 1+2) ✅
-│       ├── settingsWorker.js      ← REST: /settings ✅
+│       ├── settingsWorker.js      ← REST: /settings + /settings/test-* ✅
 │       ├── uiWorker.js            ← REST: /ui static file server (Phase 2) ✅
-│       ├── githubWorker.js        ← REST: /github (Phase 6)
+│       ├── githubWorker.js        ← REST: /github (Phase 9 — optional)
 │       ├── bigipClient.js         ← iControl REST reads+writes via localhost:8100 ✅
-│       ├── tmsh.js                ← tmsh child process (retained for Phase 5 syslog) ✅
+│       ├── notifier.js            ← syslog + webhook notifications (Phase 5) ✅
+│       ├── tmsh.js                ← tmsh child process wrapper ✅
 │       ├── versionStore.js        ← filesystem version store ✅
 │       ├── pollWorker.js          ← scheduled change detection ✅
-│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 6)
+│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 9 — optional)
 │       ├── settings.js            ← in-memory settings + persistence ✅
 │       ├── blockUtil.js           ← iApps LX state transition helpers ✅
 │       ├── logger.js              ← restnoded logger wrapper ✅
-│       └── migrations.js          ← schema migration framework (Phase 7)
+│       └── migrations.js          ← schema migration framework (Phase 6)
 ├── presentation/
 │   ├── index.html                 ← embedded summary widget (Phase 1) ✅
 │   └── app.html                   ← full-page GUI, CodeMirror + iRules overlay inlined (Phase 2+3) ✅
@@ -1002,17 +1105,81 @@ Files marked ✅ are complete. All others are planned for the phase indicated.
   Tasks auto-evict after 1 hour. Per-rule deploy lock (`_deployLock`) prevents
   concurrent deploys. Task IDs are `task-<seq>-<timestamp>`.
 
-- **Webhook payload signing algorithm:** HMAC-SHA256 matches GitHub's own
-  webhook format, making it familiar. Alternative is a shared secret in an
-  `Authorization` header. Decision: use HMAC-SHA256 (`X-Hub-Signature-256`)
-  to match GitHub convention, but implement in Phase 5.
+- **Webhook payload signing algorithm:** ✅ DECIDED (Phase 5)
+  HMAC-SHA256 (`X-Hub-Signature-256`) matching GitHub webhook format.
+  Implemented in `notifier.js`.
 
 - **Import conflict UI:** when importing a tar.gz that contains versions for
   rules that already have local history, the user needs to choose merge vs
   replace. The exact UI treatment (modal per-rule vs global choice) is
-  deferred to Phase 7.
+  deferred to Phase 6.
 
 - **GitHub App private key storage:** PEM keys are multi-line and don't store
   cleanly in a single iApps LX block property. Options: (a) store as a single
   `\n`-escaped string; (b) write to a separate file in the data directory and
-  store only the path in settings. Decision deferred to Phase 6.
+  store only the path in settings. Decision deferred to Phase 9 (optional).
+
+---
+
+### Phase 9 — GitHub integration (optional — scope and security TBD)
+
+**Status: deferred.** This phase is held pending a clearer understanding of the
+network security requirements and credential storage model. The full design
+discussion is captured in the session notes from Phase 5 completion.
+
+**Why deferred:**
+GitHub integration requires outbound HTTPS (port 443) from the BIG-IP
+management plane to `api.github.com`. Many BIG-IP management networks are
+intentionally isolated with no outbound internet path. Additionally, secure
+credential storage (PAT or GitHub App private key) on-device requires careful
+design decisions that were not yet settled at the time Phase 6 work began.
+All other Rülbased features work fully offline; GitHub is the only phase with
+an external network dependency.
+
+**Key design decisions still open (resolve before starting this phase):**
+
+1. **Outbound network path** — direct to `api.github.com`, or via an HTTP CONNECT
+   proxy? If proxy support is needed, add a `githubProxyUrl` setting.
+
+2. **Auth method scope** — PAT-only first (simpler), or both PAT and GitHub App
+   (RS256 JWT via Node.js `crypto` module, no `jsonwebtoken` npm dep) in one phase?
+
+3. **Credential storage** — PAT and GitHub App private key stored in
+   `settings.json` (write-only masked, never returned in GET responses). GitHub
+   App PEM stored as `\n`-escaped string in `settings.json` (recommended) or as
+   a separate `data/github-app.pem` file.
+
+4. **Pull confirm flow** — mandatory reason field (same as deploy modal), or
+   pre-populated from the GitHub commit message?
+
+5. **Push commit message** — operator types it in GUI, or defaults to latest
+   local version message?
+
+6. **Repo browse depth** — flat one-level only, or recursive directory traversal
+   (expensive on large repos)?
+
+**Architecture decision (recorded for when this phase resumes):**
+All GitHub API calls should be made server-side from restnoded (Option A), not
+from the browser. This keeps credentials entirely server-side, enables
+write-only PAT masking, and keeps GitHub App JWT generation (RS256) in Node.js
+`crypto` where it belongs. The browser never sees a credential. This requires
+outbound HTTPS from BIG-IP — document this as a network prerequisite.
+
+**Planned deliverables (when resumed):**
+- `lib/githubClient.js` — GitHub REST API v3 client (Node.js `https` built-in,
+  no npm deps); modelled after the `notifier.js` HTTP pattern
+- `lib/githubWorker.js` — restnoded worker at `shared/irule-versioner/github`
+- PAT auth: `Authorization: Bearer <token>` header
+- GitHub App auth: RS256 JWT generation via `crypto` module, installation access
+  token exchange, token caching with expiry
+- `GET /github/status`, `POST /github/test`, `GET /github/browse`
+- `POST /rules/:p/:n/github/link`, `DELETE` unlink, `POST` pull, `POST` push
+- Pull flow: fetch content (base64 decode), detect static vs template,
+  render `{{variables}}`, diff → confirm → snapshot
+- Push flow: base64 encode live content, PUT to GitHub Contents API with
+  previous file SHA for conflict detection
+- Conflict detection: stored `remoteSha` vs current GitHub SHA
+- Template variable substitution with allowlist sanitisation
+  (`^[a-zA-Z0-9._\-/]+$`)
+- Per-device variable map editor in GitHub tab of GUI
+- GitHub tab added to `app.html` detail panel

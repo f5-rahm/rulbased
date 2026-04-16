@@ -78,6 +78,15 @@ infrastructure.
 - **Configurable activity feed limit** (`dashboardAuditLimit`, default 15) in Settings → Dashboard
 - **Rülbased branding** — "Rül" in white, "based" in F5 blue italic (`#0072b0`)
 
+### Phase 5 — Syslog + webhook notifications
+- **Syslog** on every deploy, rollback, and (optionally) external drift event — written to `/var/log/ltm` via `local0.notice`; tag `irule-versioner` for easy grepping
+- **Webhook HTTP/HTTPS POST** to any URL (Slack incoming webhook, Teams, PagerDuty, custom endpoint) with structured JSON payload
+- **HMAC-SHA256 signing** — optional `X-Hub-Signature-256` header when a webhook secret is configured, using the same format as GitHub webhooks
+- **Retry logic** — 3 attempts with 5 s async backoff; total failure recorded in the audit log as a `webhook-failed` entry
+- **`webhookOnDrift` toggle** — webhook on external-change events is off by default to avoid noise; syslog always fires on drift when syslog is enabled
+- **Test endpoints** — `GET /settings/test-syslog` and `GET /settings/test-webhook` for field diagnostics without needing to trigger a real deploy
+- **Test Webhook button** in the Settings panel
+
 ---
 
 ## Requirements
@@ -108,11 +117,12 @@ irule-versioner/
 │       ├── blockUtil.js         ← iApps LX state transition helpers
 │       ├── configProcessor.js   ← iApps LX block lifecycle
 │       ├── logger.js            ← restnoded logger wrapper
+│       ├── notifier.js          ← syslog + webhook notifications (Phase 5)
 │       ├── pollWorker.js        ← scheduled change detection
 │       ├── rulesWorker.js       ← REST API: /rules/*
 │       ├── settings.js          ← in-memory settings with persistence
-│       ├── settingsWorker.js    ← REST API: /settings
-│       ├── tmsh.js              ← tmsh child process (retained for Phase 5 syslog)
+│       ├── settingsWorker.js    ← REST API: /settings + /settings/test-*
+│       ├── tmsh.js              ← tmsh child process wrapper
 │       ├── uiWorker.js          ← static file server: /ui/*
 │       └── versionStore.js      ← filesystem version store
 ├── presentation/
@@ -319,7 +329,98 @@ All endpoints are under `/mgmt/shared/irule-versioner/`.
 | GET | `/rules/audit` | Paginated audit log `?rule=&limit=&offset=` |
 | GET | `/settings` | Read global settings |
 | PUT | `/settings` | Update global settings |
+| GET | `/settings/test-syslog` | Fire a test syslog entry to `/var/log/ltm` |
+| GET | `/settings/test-webhook` | Fire a test POST to the configured webhook URL |
 | GET | `/ui` | Serve full-page GUI |
+
+---
+
+## Syslog and webhook notifications
+
+### Syslog
+
+When `syslogEnabled` is `true` (default), Rülbased writes entries on every
+deploy, rollback, and external-change event to **two destinations**:
+
+**`/var/log/ltm`** — operational log, `local0.notice`, tag `rulbased`:
+```
+Apr 16 07:47:10 bigip01 notice rulbased[1415]: rulbased: [deploy] rule=/Common/my_rule to=e82f233 author=admin reason=CR-4421 adding HSTS header
+```
+
+**`/var/log/audit`** — security/compliance log, `local0.info`, `AUDIT` token,
+matches native BIG-IP audit entry format for SIEM/auditor compatibility:
+```
+Apr 16 07:47:10 bigip01 info rulbased[1416]: AUDIT - user admin - RAW: rulbased: action=deploy rule=/Common/my_rule to=e82f233 reason=CR-4421 adding HSTS header
+```
+
+Test events (`GET /settings/test-syslog`) write to `/var/log/ltm` only — they
+are not real configuration changes and do not belong in the audit log.
+
+**Grep for entries:**
+```bash
+grep rulbased /var/log/ltm | tail -20
+grep rulbased /var/log/audit | tail -20
+```
+
+**Test both destinations without triggering a deploy:**
+```bash
+curl -sk -u admin: \
+  http://localhost:8100/mgmt/shared/irule-versioner/settings/test-syslog -w "\n"
+# {"ok":true,"message":"Entries written — check: grep rulbased /var/log/ltm && grep rulbased /var/log/audit"}
+```
+
+### Webhook
+
+When `webhookUrl` is set, Rülbased sends an HTTP/HTTPS POST to that URL on
+every deploy and rollback event. Webhook on drift events is controlled
+separately by `webhookOnDrift` (default `false`).
+
+**Payload shape:**
+```json
+{
+  "event": "deploy",
+  "rule": "/Common/my_rule",
+  "fromHash": "b2e1a09",
+  "toHash": "e82f233",
+  "author": "admin",
+  "reason": "CR-4421 adding HSTS header",
+  "timestamp": "2026-04-16T07:47:10.000Z",
+  "device": "bigip01.example.com"
+}
+```
+
+**`event` values:** `deploy` | `rollback` | `external-change-detected` | `test`
+
+**HMAC signing:** If `webhookSecret` is set, the request includes an
+`X-Hub-Signature-256` header — `sha256=<hmac>` computed over the raw JSON body,
+matching the GitHub webhook signature format. Verify in your receiver:
+
+```python
+import hmac, hashlib
+sig = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+assert hmac.compare_digest(sig, request.headers['X-Hub-Signature-256'])
+```
+
+**Retry behaviour:** Failed deliveries are retried up to 3 times with 5 s
+backoff. If all attempts fail, a `webhook-failed` entry is written to the audit
+log with the error message.
+
+**Test webhook from CLI:**
+```bash
+curl -sk -u admin: \
+  http://localhost:8100/mgmt/shared/irule-versioner/settings/test-webhook -w "\n"
+# {"ok":true}  or  {"ok":false,"error":"No webhook URL configured"}
+```
+
+**Example: Slack incoming webhook**
+
+Configure a Slack app with an incoming webhook URL, then in Rülbased Settings:
+- Webhook URL: `https://hooks.slack.com/services/T.../B.../...`
+- Webhook on drift events: on or off per preference
+
+Rülbased sends raw JSON — to format it for Slack, put a small translation
+function in front (AWS Lambda, a local nginx + Lua stub, etc.) or use a
+Slack workflow that accepts raw JSON payloads.
 
 ---
 
@@ -345,11 +446,13 @@ All endpoints are under `/mgmt/shared/irule-versioner/`.
 | `dataDirectory` | string | `…/data` | Version store root — do not change after first install |
 | `pollIntervalSeconds` | integer | `300` | External-change poll interval; `0` disables polling |
 | `dashboardAuditLimit` | integer | `15` | Number of entries shown in the dashboard activity feed |
-| `syslogEnabled` | boolean | `true` | Syslog on deploy/rollback/drift (Phase 5) |
-| `webhookUrl` | string | `""` | HTTP POST target for event notifications (Phase 5) |
+| `syslogEnabled` | boolean | `true` | Write to `/var/log/ltm` on deploy/rollback/drift via `local0.notice` |
+| `webhookUrl` | string | `""` | HTTP/HTTPS POST target for event notifications; empty = disabled |
+| `webhookSecret` | string | `""` | HMAC-SHA256 signing secret; when set, adds `X-Hub-Signature-256` header |
+| `webhookOnDrift` | boolean | `false` | Also fire webhook on external-change events (default off to avoid noise) |
 | `iruleLinks` | boolean | `true` | Click iRules events and namespace commands to open CloudDocs reference pages |
 | `tclManPageLinks` | boolean | `true` | Click standard TCL commands to open tcl-lang.org 8.4 man pages |
-| `debugMode` | boolean | `false` | Enable `[iRV]` browser console logging for click-to-docs troubleshooting |
+| `debugMode` | boolean | `false` | Enable `[iRV]` browser console logging and verbose notifier logging |
 
 ---
 
