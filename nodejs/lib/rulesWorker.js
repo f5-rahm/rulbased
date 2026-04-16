@@ -5,6 +5,7 @@ var bigipClient = require('./bigipClient');
 var logger = require('./logger');
 var settings = require('./settings');
 var notifier = require('./notifier');
+var migrations = require('./migrations');
 var fs = require('fs');
 var path = require('path');
 
@@ -12,15 +13,11 @@ var WORKER_URI_PATH = 'shared/irule-versioner/rules';
 
 // ---------------------------------------------------------------------------
 // Async deploy task tracking — in-memory Map (keyed by taskId)
-// Tasks survive the HTTP response but not a restnoded restart, which is fine:
-// if restnoded restarts mid-deploy, tmsh will either complete or abort
-// independently and the state will reconcile on next poll.
 // ---------------------------------------------------------------------------
 var _tasks = {};
 var _taskSeq = 0;
 
-// Per-rule deploy lock: prevents concurrent deploys to the same rule.
-// Key: "/partition/name", value: true while a deploy is running.
+// Per-rule deploy lock
 var _deployLock = {};
 
 /**
@@ -28,21 +25,20 @@ var _deployLock = {};
  *
  * Registered base URI: /mgmt/shared/irule-versioner/rules
  *
- * restnoded routes any request whose URI starts with the WORKER_URI_PATH
- * to this worker. The full pathname is available via restOperation.getUri().
- * We strip the base prefix to get the sub-path and route from there.
- *
- * However: restnoded may pass the URI in different forms depending on TMOS
- * version — with or without /mgmt prefix, with or without trailing slash.
- * The _getRelative() helper normalises all variants.
- *
  * Routes:
- *   GET  /rules                                - list all tracked iRules
- *   GET  /rules/:partition/:name/versions      - version history
- *   GET  /rules/:partition/:name/versions/:hash - single version TCL content
- *   GET  /rules/:partition/:name/diff          - ?from=:hash&to=:hash
- *   POST /rules/:partition/:name/snapshot      - manual snapshot
- *   POST /rules/:partition/:name/deploy        - deploy { hash, reason, author }
+ *   GET  /rules                                  - list all tracked iRules
+ *   GET  /rules/audit                            - global audit log
+ *   GET  /rules/:partition/:name/versions        - version history
+ *   GET  /rules/:partition/:name/versions/:hash  - single version content
+ *   GET  /rules/:partition/:name/diff            - ?from=:hash&to=:hash
+ *   GET  /rules/:partition/:name/deploy/status/:taskId
+ *   POST /rules/:partition/:name/snapshot        - manual snapshot
+ *   POST /rules/:partition/:name/deploy          - deploy { hash, reason, author }
+ *   PUT  /rules/:partition/:name/retention       - update retention policy
+ *   PUT  /rules/:partition/:name/acknowledge     - mark rule as acknowledged (clears NEW badge)
+ *   POST /rules/export                           - export data dir as tar.gz
+ *   POST /rules/import                           - import tar.gz (base64 JSON)
+ *   POST /rules/import/check                     - check for conflicts before import
  */
 function RulesWorker() {
   this.WORKER_URI_PATH = WORKER_URI_PATH;
@@ -50,19 +46,9 @@ function RulesWorker() {
   this.isPassThrough = true;
 }
 
-
-/**
- * onStart fires when restnoded loads this worker — on every restart.
- * We use it to initialise the version store and run a baseline snapshot
- * if the data directory doesn't exist yet (first install).
- * Subsequent restarts skip the baseline since manifests already exist.
- */
 /**
  * onStart fires when restnoded loads this worker.
- * Single-argument form — (success) only — the framework does NOT call
- * the function if it has two parameters.
- * Uses this.logger (injected by restnoded's RestWorker mixin) rather
- * than our custom logger module to avoid any initialisation ordering issue.
+ * Single-argument form — (success) only.
  */
 RulesWorker.prototype.onStart = function (success) {
   var self = this;
@@ -70,9 +56,6 @@ RulesWorker.prototype.onStart = function (success) {
 
   self.logger.info('[irule-versioner] RulesWorker.onStart: start');
 
-  // Wire settings.load() so persisted settings (poll interval, etc.) are
-  // available before the poll worker starts.  The data directory may not
-  // exist yet on first install — load() handles that gracefully.
   try {
     settings.load(dataDir);
   } catch (se) {
@@ -86,55 +69,62 @@ RulesWorker.prototype.onStart = function (success) {
         return success();
       }
 
-      self.logger.info('[irule-versioner] RulesWorker.onStart: store initialised, checking for existing data');
+      self.logger.info('[irule-versioner] RulesWorker.onStart: store initialised, running migrations');
 
-      // Check synchronously for existing partition subdirectories
-      var fsLocal = require('fs');
-      var pathLocal = require('path');
-      var hasManifest = false;
-
-      try {
-        var entries = fsLocal.readdirSync(dataDir);
-        for (var e = 0; e < entries.length; e++) {
-          var entry = entries[e];
-          if (entry === 'audit.jsonl' || entry === 'settings.json') { continue; }
-          var entryPath = pathLocal.join(dataDir, entry);
-          try {
-            if (fsLocal.statSync(entryPath).isDirectory()) {
-              hasManifest = true;
-              break;
-            }
-          } catch (se) { /* skip */ }
+      // Run schema migrations before anything else.
+      // Migrations are idempotent; on a fresh install v0→v1 is a no-op
+      // (no blobs to prune).  On existing installs it cleans up orphaned blobs.
+      migrations.run(dataDir, settings, function (migErr) {
+        if (migErr) {
+          self.logger.warning('[irule-versioner] RulesWorker.onStart: migration error (non-fatal): ' + migErr.message);
         }
-      } catch (rdErr) {
-        self.logger.warning('[irule-versioner] RulesWorker.onStart: could not read data dir: ' + rdErr.message);
-      }
 
-      if (hasManifest) {
-        self.logger.info('[irule-versioner] RulesWorker.onStart: existing data found, skipping baseline');
-        _startPollWorker(self, dataDir);
-        return success();
-      }
+        // Check for existing partition subdirectories to decide whether to baseline
+        var fsLocal = require('fs');
+        var pathLocal = require('path');
+        var hasManifest = false;
 
-      self.logger.info('[irule-versioner] RulesWorker.onStart: no existing data, running baseline');
+        try {
+          var entries = fsLocal.readdirSync(dataDir);
+          for (var e = 0; e < entries.length; e++) {
+            var entry = entries[e];
+            if (entry === 'audit.jsonl' || entry === 'settings.json') { continue; }
+            var entryPath = pathLocal.join(dataDir, entry);
+            try {
+              if (fsLocal.statSync(entryPath).isDirectory()) {
+                hasManifest = true;
+                break;
+              }
+            } catch (se2) { /* skip */ }
+          }
+        } catch (rdErr) {
+          self.logger.warning('[irule-versioner] RulesWorker.onStart: could not read data dir: ' + rdErr.message);
+        }
 
-      bigipClient.listAllRules(function (listErr, rules) {
-        if (listErr) {
-          self.logger.severe('[irule-versioner] RulesWorker.onStart: listAllRules failed: ' + listErr.message);
+        if (hasManifest) {
+          self.logger.info('[irule-versioner] RulesWorker.onStart: existing data found, skipping baseline');
+          _startPollWorker(self, dataDir);
           return success();
         }
 
-        var ruleCount = Object.keys(rules).length;
-        self.logger.info('[irule-versioner] RulesWorker.onStart: got ' + ruleCount + ' rules, snapshotting');
-
-        versionStore.baselineSnapshot(rules, dataDir, function (snapErr, count) {
-          if (snapErr) {
-            self.logger.severe('[irule-versioner] RulesWorker.onStart: baseline failed: ' + snapErr.message);
-          } else {
-            self.logger.info('[irule-versioner] RulesWorker.onStart: baseline complete, ' + count + ' rules snapshotted');
+        self.logger.info('[irule-versioner] RulesWorker.onStart: no existing data, running baseline');
+        bigipClient.listAllRules(function (listErr, liveRules) {
+          if (listErr) {
+            self.logger.severe('[irule-versioner] RulesWorker.onStart: listAllRules failed: ' + listErr.message);
+            _startPollWorker(self, dataDir);
+            return success();
           }
-          _startPollWorker(self, dataDir);
-          success();
+          var ruleCount = Object.keys(liveRules).length;
+          self.logger.info('[irule-versioner] RulesWorker.onStart: got ' + ruleCount + ' rules, snapshotting');
+          versionStore.baselineSnapshot(liveRules, dataDir, function (snapErr, count) {
+            if (snapErr) {
+              self.logger.severe('[irule-versioner] RulesWorker.onStart: baseline failed: ' + snapErr.message);
+            } else {
+              self.logger.info('[irule-versioner] RulesWorker.onStart: baseline complete, ' + count + ' rules snapshotted');
+            }
+            _startPollWorker(self, dataDir);
+            return success();
+          });
         });
       });
     });
@@ -145,20 +135,19 @@ RulesWorker.prototype.onStart = function (success) {
 };
 
 function _startPollWorker(workerInstance, dataDir) {
+  var pollWorker = require('./pollWorker');
   try {
-    var pollIntervalSeconds = settings.getAll().pollIntervalSeconds || 300;
-    if (pollIntervalSeconds <= 0) {
+    var pollIntervalSeconds = settings.getAll().pollIntervalSeconds;
+    if (!pollIntervalSeconds || pollIntervalSeconds <= 0) {
       workerInstance.logger.info('[irule-versioner] RulesWorker.onStart: poll worker disabled (interval=0)');
       return;
     }
-    var pollWorker = require('./pollWorker');
     pollWorker.start(dataDir, pollIntervalSeconds);
     workerInstance.logger.info('[irule-versioner] RulesWorker.onStart: poll worker started, interval=' + pollIntervalSeconds + 's');
   } catch (e) {
     workerInstance.logger.warning('[irule-versioner] RulesWorker.onStart: could not start poll worker: ' + e.message);
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // GET handler
@@ -169,14 +158,14 @@ RulesWorker.prototype.onGet = function (restOperation) {
   var dataDir = settings.getDataDir();
 
   logger.info('RulesWorker.onGet segments=' + JSON.stringify(segments) +
-    ' path=' + (uri ? uri.pathname : 'null'));
+    ' uri=' + (uri ? uri.pathname : 'null'));
 
-  // GET /rules  - list all iRules
+  // GET /rules
   if (segments.length === 0) {
     return _listRules(dataDir, restOperation);
   }
 
-  // GET /rules/audit  - paginated audit log (special-case before partition/name routing)
+  // GET /rules/audit
   if (segments.length === 1 && segments[0] === 'audit') {
     var params = _extractQuery(uri);
     return _getAudit(dataDir, params, restOperation);
@@ -221,6 +210,11 @@ RulesWorker.prototype.onPut = function (restOperation) {
     return _updateRetention(dataDir, segments[0], segments[1], body, restOperation);
   }
 
+  // PUT /rules/:partition/:name/acknowledge
+  if (segments.length === 3 && segments[2] === 'acknowledge') {
+    return _acknowledgeRule(dataDir, segments[0], segments[1], restOperation);
+  }
+
   _notFound(restOperation);
 };
 
@@ -233,6 +227,21 @@ RulesWorker.prototype.onPost = function (restOperation) {
   var dataDir = settings.getDataDir();
 
   logger.info('RulesWorker.onPost segments=' + JSON.stringify(segments));
+
+  // POST /rules/export
+  if (segments.length === 1 && segments[0] === 'export') {
+    return _exportData(dataDir, restOperation);
+  }
+
+  // POST /rules/import/check  — must be tested before /import
+  if (segments.length === 2 && segments[0] === 'import' && segments[1] === 'check') {
+    return _importCheck(dataDir, body, restOperation);
+  }
+
+  // POST /rules/import
+  if (segments.length === 1 && segments[0] === 'import') {
+    return _importData(dataDir, body, restOperation);
+  }
 
   // POST /rules/:partition/:name/snapshot
   if (segments.length === 3 && segments[2] === 'snapshot') {
@@ -248,19 +257,29 @@ RulesWorker.prototype.onPost = function (restOperation) {
 };
 
 // ---------------------------------------------------------------------------
+// DELETE handler
+// ---------------------------------------------------------------------------
+RulesWorker.prototype.onDelete = function (restOperation) {
+  var segments = _getSegments(restOperation);
+  var dataDir  = settings.getDataDir();
+
+  logger.info('RulesWorker.onDelete segments=' + JSON.stringify(segments));
+
+  // DELETE /rules/:partition/:name  — remove rule from version store
+  if (segments.length === 2) {
+    return _deleteRuleFromStore(dataDir, segments[0], segments[1], restOperation);
+  }
+
+  _notFound(restOperation);
+};
+
+// ---------------------------------------------------------------------------
 // URI parsing helper
-// Strips the worker base path in all forms restnoded may present it:
-//   /mgmt/shared/irule-versioner/rules/Common/my_rule/versions
-//   /shared/irule-versioner/rules/Common/my_rule/versions
-//   /Common/my_rule/versions   (already stripped by restnoded on some versions)
-//   (empty string or just /)  -> root = list endpoint
-// Returns a clean array of non-empty path segments after the base.
 // ---------------------------------------------------------------------------
 function _getSegments(restOperation) {
   var uri = restOperation.getUri();
   var pathname = uri ? (uri.pathname || '') : '';
 
-  // Strip known prefixes - try longest first
   var prefixes = [
     '/mgmt/shared/irule-versioner/rules',
     '/shared/irule-versioner/rules'
@@ -274,7 +293,6 @@ function _getSegments(restOperation) {
     }
   }
 
-  // Strip leading slash and split, filtering empty segments
   return relative.replace(/^\/+/, '').split('/').filter(function (s) {
     return s.length > 0;
   });
@@ -343,16 +361,17 @@ function _manualSnapshot(dataDir, partition, name, body, restOperation) {
   var message = body.message || 'Manual snapshot';
   var author  = body.author  || 'unknown';
 
-  // If the caller provides content (e.g. GUI inline editor), use it directly
-  // and also deploy it to the live system so the rule matches the snapshot.
-  // If no content is provided, read the current live content as before.
   if (body.content && typeof body.content === 'string' && body.content.trim().length > 0) {
     var content = body.content;
 
-    // Deploy the edited content to the live system first
     bigipClient.deployRule(partition, name, content, function (deployErr) {
       if (deployErr) {
-        return _error(restOperation, 500, 'Failed to deploy edited content: ' + deployErr.message);
+        // Return 200 with ok:false so restnoded doesn't intercept/wrap the body.
+        // The GUI checks data.ok and surfaces data.error as the TCL message.
+        restOperation.setStatusCode(200);
+        restOperation.setBody({ ok: false, error: deployErr.message });
+        restOperation.complete();
+        return;
       }
 
       versionStore.saveVersion(dataDir, partition, name, content,
@@ -388,7 +407,6 @@ function _manualSnapshot(dataDir, partition, name, body, restOperation) {
     return;
   }
 
-  // No content provided — snapshot current live state (original behaviour)
   bigipClient.getRuleContent(partition, name, function (err, content) {
     if (err) {
       return _error(restOperation, 404,
@@ -437,7 +455,7 @@ function _getAudit(dataDir, params, restOperation) {
         if (!ruleFilter || entry.rule === ruleFilter) { entries.push(entry); }
       } catch (pe) { /* skip malformed lines */ }
     });
-    entries.reverse(); // most recent first
+    entries.reverse();
     restOperation.setStatusCode(200);
     restOperation.setBody({ items: entries.slice(offset, offset + limit), total: entries.length, limit: limit, offset: offset });
     restOperation.complete();
@@ -475,6 +493,173 @@ function _updateRetention(dataDir, partition, name, body, restOperation) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+function _exportData(dataDir, restOperation) {
+  var childProcess = require('child_process');
+  var backupDir = '/shared/rulbased-backups';
+  var ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19);
+  var filename = 'rulbased-data-' + ts + '.tar.gz';
+
+  // Write to /var/tmp first — always writable on BIG-IP, no mkdir needed.
+  // After success we do a best-effort copy to backupDir for on-device retention.
+  var tmpPath = '/var/tmp/' + filename;
+
+  logger.info('RulesWorker._exportData: creating archive at ' + tmpPath);
+
+  versionStore.exportArchive(dataDir, tmpPath, function (tarErr) {
+    if (tarErr) {
+      return _error(restOperation, 500, tarErr.message);
+    }
+
+    fs.readFile(tmpPath, function (readErr, buf) {
+      if (readErr) {
+        fs.unlink(tmpPath, function () {});
+        return _error(restOperation, 500, 'Archive created but could not be read: ' + readErr.message);
+      }
+
+      var b64 = buf.toString('base64');
+      logger.info('RulesWorker._exportData: archive ' + buf.length + ' bytes');
+
+      // Respond immediately — don't block the download on the device copy
+      restOperation.setStatusCode(200);
+      restOperation.setBody({
+        filename: filename,
+        data: b64,
+        size: buf.length,
+        path: path.join(backupDir, filename)
+      });
+      restOperation.complete();
+
+      // Best-effort copy to backupDir; fire-and-forget after response is sent.
+      // Strategy: mkdir -p the backupDir, then rename tmpPath into it (atomic on
+      // same filesystem).  If rename fails (cross-device), fall back to copy+unlink.
+      var backupPath = path.join(backupDir, filename);
+      childProcess.execFile('/bin/mkdir', ['-p', backupDir], { timeout: 10000 }, function (mkErr) {
+        if (mkErr) {
+          logger.warn('RulesWorker._exportData: mkdir failed for ' + backupDir + ': ' + mkErr.message);
+          fs.unlink(tmpPath, function () {});
+          return;
+        }
+        fs.rename(tmpPath, backupPath, function (renameErr) {
+          if (!renameErr) {
+            logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
+            return;
+          }
+          // rename failed (likely cross-device) - fall back to copy then unlink
+          logger.debug('RulesWorker._exportData: rename failed (' + renameErr.message + '), trying copy');
+          fs.readFile(tmpPath, function (readErr, buf2) {
+            if (readErr) {
+              logger.warn('RulesWorker._exportData: could not read tmpPath for copy: ' + readErr.message);
+              fs.unlink(tmpPath, function () {});
+              return;
+            }
+            fs.writeFile(backupPath, buf2, function (cpErr) {
+              if (cpErr) {
+                logger.warn('RulesWorker._exportData: could not save to ' + backupPath + ': ' + cpErr.message);
+              } else {
+                logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
+              }
+              fs.unlink(tmpPath, function () {});
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Import — conflict check
+// ---------------------------------------------------------------------------
+
+function _importCheck(dataDir, body, restOperation) {
+  if (!body || !body.data) {
+    return _error(restOperation, 400, 'Request body must contain { "data": "<base64>" }');
+  }
+
+  var tmpArchive = '/tmp/.irv-import-check-' + Date.now() + '.tar.gz';
+  var buf;
+  try {
+    buf = Buffer.from(body.data, 'base64');
+  } catch (e) {
+    return _error(restOperation, 400, 'Invalid base64 data: ' + e.message);
+  }
+
+  fs.writeFile(tmpArchive, buf, function (writeErr) {
+    if (writeErr) {
+      return _error(restOperation, 500, 'Could not write temp archive: ' + writeErr.message);
+    }
+    versionStore.checkImportConflicts(tmpArchive, dataDir, function (checkErr, result) {
+      fs.unlink(tmpArchive, function () {});
+      if (checkErr) {
+        return _error(restOperation, 500, 'Conflict check failed: ' + checkErr.message);
+      }
+      restOperation.setStatusCode(200);
+      restOperation.setBody(result);
+      restOperation.complete();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Import — execute
+// ---------------------------------------------------------------------------
+
+function _importData(dataDir, body, restOperation) {
+  if (!body || !body.data) {
+    return _error(restOperation, 400, 'Request body must contain { "data": "<base64>", "conflictMode": "merge"|"replace" }');
+  }
+
+  var conflictMode = body.conflictMode || 'merge';
+  if (conflictMode !== 'merge' && conflictMode !== 'replace') {
+    return _error(restOperation, 400, 'conflictMode must be "merge" or "replace"');
+  }
+
+  var tmpArchive = '/tmp/.irv-import-' + Date.now() + '.tar.gz';
+  var buf;
+  try {
+    buf = Buffer.from(body.data, 'base64');
+  } catch (e) {
+    return _error(restOperation, 400, 'Invalid base64 data: ' + e.message);
+  }
+
+  logger.info('RulesWorker._importData: archive size=' + buf.length + ' conflictMode=' + conflictMode);
+
+  fs.writeFile(tmpArchive, buf, function (writeErr) {
+    if (writeErr) {
+      return _error(restOperation, 500, 'Could not write temp archive: ' + writeErr.message);
+    }
+    versionStore.importArchive(tmpArchive, dataDir, conflictMode, function (importErr, report) {
+      fs.unlink(tmpArchive, function () {});
+      if (importErr) {
+        return _error(restOperation, 500, 'Import failed: ' + importErr.message);
+      }
+      logger.info('RulesWorker._importData: complete — ' + JSON.stringify(report));
+      // Append an audit entry recording the import
+      var auditEntry = {
+        ts: new Date().toISOString(),
+        author: body.author || 'unknown',
+        action: 'import',
+        rule: null,
+        reason: 'Imported archive (' + conflictMode + ' mode): ' +
+          report.imported + ' new, ' + report.merged + ' merged, ' +
+          report.replaced + ' replaced'
+      };
+      versionStore.appendAudit(dataDir, auditEntry, function () {});
+      restOperation.setStatusCode(200);
+      restOperation.setBody({ ok: true, report: report });
+      restOperation.complete();
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Deploy helpers
+// ---------------------------------------------------------------------------
+
 function _finishTask(task, lockKey, errMsg, result) {
   delete _deployLock[lockKey];
   task.completedAt = new Date().toISOString();
@@ -487,7 +672,6 @@ function _finishTask(task, lockKey, errMsg, result) {
     task.result = result;
     logger.info('Deploy task ' + task.taskId + ' completed successfully');
   }
-  // Evict tasks older than 1 hour to avoid unbounded memory growth
   var cutoff = Date.now() - 3600000;
   Object.keys(_tasks).forEach(function (id) {
     var t = _tasks[id];
@@ -515,7 +699,6 @@ function _deployVersion(dataDir, partition, name, body, restOperation) {
     return _error(restOperation, 409, 'A deploy is already in progress for ' + lockKey);
   }
 
-  // Create task record; respond immediately with 202 + taskId
   _taskSeq++;
   var taskId = 'task-' + _taskSeq + '-' + Date.now();
   var task = {
@@ -537,7 +720,6 @@ function _deployVersion(dataDir, partition, name, body, restOperation) {
   restOperation.setBody({ taskId: taskId, status: 'running' });
   restOperation.complete();
 
-  // Async deploy
   versionStore.getVersionContent(dataDir, partition, name, hash, function (err, content) {
     if (err) {
       return _finishTask(task, lockKey, 'Version not found: ' + hash, null);
@@ -584,7 +766,69 @@ function _deployVersion(dataDir, partition, name, body, restOperation) {
 }
 
 // ---------------------------------------------------------------------------
-// Diff utility - line-level LCS-based side-by-side diff
+// Acknowledge rule (clear "new" state)
+// ---------------------------------------------------------------------------
+
+function _acknowledgeRule(dataDir, partition, name, restOperation) {
+  versionStore.acknowledgeRule(dataDir, partition, name, function (err) {
+    if (err) {
+      return _error(restOperation, 404,
+        'Rule not found in version store: ' + partition + '/' + name);
+    }
+    restOperation.setStatusCode(200);
+    restOperation.setBody({ ok: true, acknowledged: true });
+    restOperation.complete();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Delete rule from store
+// ---------------------------------------------------------------------------
+
+function _deleteRuleFromStore(dataDir, partition, name, restOperation) {
+  var childProcess = require('child_process');
+  var safeName = name.replace(/\//g, '_');
+  var ruleDir = require('path').join(dataDir, partition, safeName);
+
+  logger.info('RulesWorker._deleteRuleFromStore: ' + partition + '/' + name + ' -> ' + ruleDir);
+
+  // Verify it exists before attempting removal
+  var fs = require('fs');
+  fs.access(ruleDir, fs.F_OK, function (accessErr) {
+    if (accessErr) {
+      return _error(restOperation, 404,
+        'Rule not found in version store: ' + partition + '/' + name);
+    }
+
+    // Use rm -rf via child_process — Node 6 has no recursive rmdir
+    childProcess.execFile('/bin/rm', ['-rf', ruleDir], { timeout: 15000 },
+      function (rmErr, stdout, stderr) {
+        if (rmErr) {
+          logger.error('_deleteRuleFromStore: rm failed: ' + (stderr || rmErr.message));
+          return _error(restOperation, 500,
+            'Failed to remove rule directory: ' + (stderr || rmErr.message));
+        }
+
+        // Append audit entry
+        var auditEntry = {
+          ts:     new Date().toISOString(),
+          author: 'admin',
+          action: 'store-delete',
+          rule:   '/' + partition + '/' + name,
+          reason: 'Removed from version store via UI'
+        };
+        versionStore.appendAudit(dataDir, auditEntry, function () {});
+
+        logger.info('_deleteRuleFromStore: removed ' + ruleDir);
+        restOperation.setStatusCode(200);
+        restOperation.setBody({ ok: true, removed: '/' + partition + '/' + name });
+        restOperation.complete();
+      });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Diff utility
 // ---------------------------------------------------------------------------
 function _computeDiff(oldText, newText) {
   var oldLines = (oldText || '').split('\n');
@@ -652,7 +896,6 @@ function _lcs(a, b) {
 // ---------------------------------------------------------------------------
 function _extractQuery(uri) {
   if (!uri) { return {}; }
-  // uri.query may be a pre-parsed object (TMOS) or a raw string — handle both
   var q = uri.query;
   if (q && typeof q === 'object') { return q; }
   if (!q || typeof q !== 'string') { return {}; }

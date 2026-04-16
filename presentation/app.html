@@ -533,6 +533,7 @@ span.CodeMirror-selectedtext { background: none; }
     .b-ok      { background: var(--success-bg); color: var(--success); }
     .b-drift   { background: var(--warning-bg); color: var(--warning); }
     .b-new     { background: var(--info-bg);    color: var(--info); }
+    .b-orphan  { background: #E4002B; color: #fff; }
     .b-deploy  { background: var(--accent-light); color: var(--accent); }
     .b-rollback{ background: var(--warning-bg); color: var(--warning); }
     .b-ext     { background: var(--danger-bg);  color: var(--danger); }
@@ -578,7 +579,23 @@ span.CodeMirror-selectedtext { background: none; }
     #btn-save   { background: var(--success); color: #fff; display: none; }
     #btn-cancel { background: var(--bg); color: var(--text); border: 1px solid var(--border); display: none; }
 
-    #cm-wrap { flex: 1 1 auto; overflow: hidden; position: relative; }
+    #cm-wrap { flex: 1 1 auto; overflow: hidden; position: relative; min-height: 0; }
+    #deploy-inline { flex: 0 0 auto; display: none; flex-direction: column; gap: 8px;
+      padding: 10px 14px; border-top: 1px solid var(--border);
+      background: var(--bg-panel); }
+    #deploy-inline.open { display: flex; }
+    #deploy-inline-reason { width: 100%; font-size: 12px; padding: 5px 8px;
+      box-sizing: border-box; resize: vertical; min-height: 52px;
+      font-family: inherit; border: 1px solid var(--border);
+      border-radius: var(--radius); background: var(--bg); color: var(--text); }
+    #deploy-inline-reason:focus { outline: none; border-color: var(--accent); }
+    #deploy-inline-error { display: none; font-size: 11px; font-family: monospace;
+      white-space: pre-wrap; word-break: break-all; padding: 8px 10px;
+      background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5;
+      border-radius: var(--radius); max-height: 120px; overflow-y: auto; }
+    #deploy-inline-btns { display: flex; gap: 8px; align-items: center; }
+    #deploy-inline-btns .reason-hint { flex: 1; font-size: 10px;
+      color: var(--text-muted); }
     .CodeMirror { height: 100% !important;
       font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace !important;
       font-size: 12.5px !important; line-height: 1.6 !important;
@@ -896,6 +913,7 @@ span.CodeMirror-selectedtext { background: none; }
       &nbsp;Drift: <span class="sv" id="s-drift" style="color:#fbbf24">—</span>
     </div>
     <button class="hdr-btn" id="btn-refresh">⟳ Refresh</button>
+    <button class="hdr-btn" id="btn-backup">Backup</button>
     <button class="hdr-btn" id="btn-settings">⚙ Settings</button>
   </div>
 
@@ -914,6 +932,7 @@ span.CodeMirror-selectedtext { background: none; }
             <option value="flat">Flat</option>
             <option value="partition">Partition</option>
           </select>
+          <button id="btn-create-rule" title="Create a new iRule" style="font-size:11px;padding:2px 8px;white-space:nowrap;margin-left:auto">+ New</button>
         </div>
       </div>
       <div id="rule-list"><div class="loading-row">Loading…</div></div>
@@ -932,43 +951,46 @@ span.CodeMirror-selectedtext { background: none; }
             <div class="db-intro-desc">
               Rülbased brings version control to BIG-IP iRules natively, running entirely
               on-device as an iApps LX extension with no external dependencies. Every change
-              to every iRule is automatically detected and snapshotted — whether made through
-              the GUI, VS Code, or any other tool — giving you a complete, timestamped history
-              of your traffic policy.
+              is automatically detected and snapshotted whether made here, in TMUI, via tmsh,
+              or any other tool, giving you a complete, auditable history of your local BIG-IP
+              set of iRules.
             </div>
             <div class="db-intro-divider"></div>
             <ul class="db-feature-list">
-              <li><strong>Automatic change detection</strong> — polls the running config and snapshots any iRule that drifted from its last known state, regardless of how the change was made</li>
-              <li><strong>Side-by-side diff viewer</strong> — line-level comparison between any two versions before you commit to a deployment or rollback</li>
-              <li><strong>Two-step deploy with mandatory reason</strong> — every change requires a typed justification; nothing deploys without an audit trail entry</li>
+              <li><strong>Automatic change detection</strong> — polls the running config and snapshots any iRule that changed outside this tool</li>
+              <li><strong>Side-by-side diff viewer</strong> — line-level comparison between any two versions before deploying or rolling back</li>
+              <li><strong>Deploy with mandatory reason</strong> — every change requires a typed justification; nothing deploys without an audit trail entry</li>
               <li><strong>Full version history per iRule</strong> — browse, compare, and restore any prior version across all partitions</li>
+              <li><strong>Create and edit iRules</strong> — write new iRules directly in the built-in editor; TCL syntax errors shown inline on deploy</li>
+              <li><strong>Syslog and webhook notifications</strong> — fire on deploy, rollback, and drift events; webhook payload is HMAC-signed (X-Hub-Signature-256)</li>
+              <li><strong>Backup and restore</strong> — export full version history as a .tar.gz; restore onto a fresh system or merge selectively after an upgrade</li>
               <li><strong>Configurable retention policies</strong> — keep unlimited history, cap by count, or age out older versions per iRule</li>
-              <li><strong>Built-in audit log</strong> — append-only record of every deploy, rollback, snapshot, and externally-detected change with author, timestamp, and reason</li>
+              <li><strong>Built-in audit log</strong> — append-only record of every deploy, rollback, snapshot, drift detection, import, and deletion</li>
             </ul>
             <div class="db-intro-meta">
-              <span class="db-version-pill">v1.0.0</span>
+              <span class="db-version-pill">v1.2.0</span>
             </div>
           </div>
 
           <!-- Health summary -->
           <div class="db-card db-health">
             <div class="db-card-title">System Health</div>
-            <div class="db-health-grid">
-              <div class="db-stat">
+            <div class="db-health-grid" style="grid-template-columns:repeat(4,1fr)">
+              <div class="db-stat" title="Total iRules visible on this BIG-IP, whether tracked or not">
                 <div class="db-stat-val" id="db-s-tracked">—</div>
-                <div class="db-stat-lbl">Rules tracked</div>
+                <div class="db-stat-lbl">Tracked</div>
               </div>
-              <div class="db-stat">
+              <div class="db-stat" title="Rules whose live content differs from the last stored version — changed outside Rulbased, pending the next poll">
                 <div class="db-stat-val db-stat-drift" id="db-s-drift">—</div>
                 <div class="db-stat-lbl">Drifted</div>
               </div>
-              <div class="db-stat">
-                <div class="db-stat-val" id="db-s-versioned">—</div>
-                <div class="db-stat-lbl">With history</div>
-              </div>
-              <div class="db-stat">
+              <div class="db-stat" title="Rules present on the BIG-IP that have no version history yet — will be baselined on next poll">
                 <div class="db-stat-val" id="db-s-unversioned">—</div>
-                <div class="db-stat-lbl">Not yet tracked</div>
+                <div class="db-stat-lbl">New</div>
+              </div>
+              <div class="db-stat" title="Rules with stored version history but no corresponding object on the BIG-IP — deleted from the system or not yet restored">
+                <div class="db-stat-val" id="db-s-orphan" style="color:#E4002B">—</div>
+                <div class="db-stat-lbl">Orphaned</div>
               </div>
             </div>
           </div>
@@ -983,6 +1005,26 @@ span.CodeMirror-selectedtext { background: none; }
           <div class="db-card db-changelog">
             <div class="db-card-title">Changelog</div>
             <div class="db-cl-list">
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v1.2.0</div>
+                <ul class="db-cl-items">
+                  <li>Backup &amp; Restore — export/import version history; archive analysis (identical/new/orphaned/empty system) with merge or replace</li>
+                  <li>Create iRule — write new iRules in the built-in editor; TCL syntax errors shown inline; auto-acknowledges on first deploy</li>
+                  <li>Orphaned rules — ORPHAN badge (F5 red) for rules in store with no live BIG-IP object; dashboard Orphaned counter</li>
+                  <li>Remove from store — delete version history for a rule via confirm modal; does not affect live iRule</li>
+                  <li>Acknowledge — new rules stay NEW until manually acknowledged; greyed-out until snapshot exists</li>
+                  <li>Dashboard health: four stats (Tracked, Drifted, New, Orphaned) with tooltips</li>
+                  <li>Backup button in toolbar; backups saved to /shared/rulbased-backups</li>
+                </ul>
+              </div>
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v1.1.0</div>
+                <ul class="db-cl-items">
+                  <li>Syslog notifications — dual destinations: /var/log/ltm and /var/log/audit; tag: rulbased</li>
+                  <li>Webhook notifications — HTTP/HTTPS POST with optional HMAC-SHA256 X-Hub-Signature-256 signing; configurable drift gating</li>
+                  <li>Schema migration framework — orphaned blob cleanup on startup</li>
+                </ul>
+              </div>
               <div class="db-cl-entry">
                 <div class="db-cl-ver">v1.0.0</div>
                 <ul class="db-cl-items">
@@ -1050,12 +1092,24 @@ span.CodeMirror-selectedtext { background: none; }
         <div id="ov-toolbar">
           <span id="ov-hash" style="font-family:monospace;font-size:11px;color:var(--text-muted)"></span>
           <div class="spacer"></div>
+          <button id="btn-acknowledge" title="Mark as reviewed — clears the NEW badge" style="background:var(--accent);color:#fff;display:none">&#10003; Acknowledge</button>
           <button id="btn-cancel">✕ Cancel</button>
           <button id="btn-save">💾 Save &amp; Deploy…</button>
           <button id="btn-edit">✏ Edit</button>
+          <button id="btn-remove-from-store" title="Remove version history for this rule" style="background:#E4002B;color:#fff;margin-left:4px">&#x1F5D1; Remove</button>
         </div>
         <div id="cm-wrap">
           <textarea id="cm-editor"></textarea>
+        </div>
+        <div id="deploy-inline">
+          <div id="deploy-inline-error"></div>
+          <label style="font-size:11px;font-weight:600;color:var(--text-sub)">Reason for change <span style="color:#dc2626">*</span></label>
+          <textarea id="deploy-inline-reason" placeholder="e.g. CR-1234 -- Adding HSTS header per security review"></textarea>
+          <div id="deploy-inline-btns">
+            <button id="btn-inline-deploy" disabled style="background:var(--success);color:#fff">&#128190; Save &amp; Deploy</button>
+            <button id="btn-inline-cancel" style="background:var(--bg);border:1px solid var(--border)">&#x2715; Cancel</button>
+            <span class="reason-hint">Required. Ctrl+Enter to deploy.</span>
+          </div>
         </div>
       </div>
 
@@ -1174,9 +1228,105 @@ span.CodeMirror-selectedtext { background: none; }
         </div>
       </div>
     </div>
+      <div class="s-section">
+        <h3>Backup &amp; Restore</h3>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          The <strong>Backup</strong> button in the toolbar downloads a .tar.gz of all version
+          history and saves a copy to <code>/shared/rulbased-backups</code> on the device.
+        </div>
+      </div>
     <div id="settings-ftr">
       <button id="btn-scancel" style="background:var(--bg);border:1px solid var(--border)">Cancel</button>
       <button id="btn-ssave">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================================================================
+     Backup / Restore modal
+================================================================== -->
+<!-- ==================================================================
+     Create iRule modal
+================================================================== -->
+<div id="create-overlay" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:460px">
+    <div class="modal-hdr">
+      <span class="modal-hdr-title">Create New iRule</span>
+      <button class="modal-x" id="btn-create-close">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">Partition</label>
+        <select id="create-partition" style="width:100%;font-size:13px;padding:4px 8px;box-sizing:border-box"></select>
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">iRule name</label>
+        <input id="create-name" type="text" placeholder="my_irule" style="width:100%;font-size:13px;padding:4px 8px;box-sizing:border-box">
+      </div>
+      <div id="create-error" style="font-size:12px;color:#dc2626;display:none"></div>
+    </div>
+    <div class="modal-ftr">
+      <button id="btn-create-cancel" style="background:var(--bg);border:1px solid var(--border)">Cancel</button>
+      <button id="btn-create-confirm" style="background:var(--accent);color:#fff">Open Editor</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================================================================
+     Remove from store confirm modal
+================================================================== -->
+<div id="remove-overlay" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-hdr">
+      <span class="modal-hdr-title">Remove from version store</span>
+      <button class="modal-x" id="btn-remove-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p>This will permanently delete all version history for
+        <strong id="remove-rule-name"></strong>
+        from the local store.</p>
+      <p style="font-size:12px;color:var(--text-muted)">
+        The iRule itself is <strong>not</strong> affected on the BIG-IP.
+        This only removes the history tracked by Rulbased.
+        This action cannot be undone.
+      </p>
+    </div>
+    <div class="modal-ftr">
+      <button id="btn-remove-cancel" style="background:var(--bg);border:1px solid var(--border)">Cancel</button>
+      <button id="btn-remove-confirm" style="background:#E4002B;color:#fff">Delete history</button>
+    </div>
+  </div>
+</div>
+
+<div id="backup-overlay" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-hdr">
+      <span class="modal-hdr-title">&#10571; Backup &amp; Restore</span>
+      <button class="modal-x" id="btn-backup-close">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:18px">
+      <div>
+        <div style="font-weight:600;margin-bottom:6px">Download backup</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+          Creates a <code>.tar.gz</code> of all version history and downloads it to
+          your browser. A copy is also saved on the device at /shared/rulbased-backups.
+        </div>
+        <button id="btn-do-export" style="padding:6px 14px">&#10571; Download Backup</button>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:0">
+      <div>
+        <div style="font-weight:600;margin-bottom:6px">Restore from backup</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+          Select a <code>.tar.gz</code> previously exported from Rulbased.
+          If rules already have local history you will be asked how to handle conflicts.
+        </div>
+        <input id="import-file-input" type="file" style="display:none">
+        <button id="btn-do-import" style="padding:6px 14px">&#10514; Choose File...</button>
+      </div>
+      <div id="backup-status" style="font-size:12px;color:var(--text-muted);min-height:20px"></div>
+    </div>
+    <div class="modal-ftr">
+      <button id="btn-backup-done" style="background:var(--bg);border:1px solid var(--border)">Close</button>
     </div>
   </div>
 </div>
@@ -1202,6 +1352,7 @@ span.CodeMirror-selectedtext { background: none; }
         <textarea id="reason-input" placeholder="e.g. CR-1234 — Adding HSTS header per security review"></textarea>
         <div class="reason-hint">Required. Stored in the audit log.</div>
       </div>
+      <div id="deploy-error" style="display:none;margin-top:12px;padding:10px 14px;border-radius:6px;font-size:12px;font-family:monospace;white-space:pre-wrap;word-break:break-all;background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;max-height:180px;overflow-y:auto"></div>
     </div>
     <div class="modal-ftr">
       <button id="btn-dcancel">Cancel</button>
@@ -1865,13 +2016,14 @@ function req(method, url, body, cb) {
     var d = null;
     try { d = JSON.parse(x.responseText); } catch (e) { d = { error: x.responseText }; }
     if (x.status >= 200 && x.status < 300) { cb(null, d); }
-    else { cb((d && d.error) || ('HTTP ' + x.status), null); }
+    else { cb((d && (d.error || d.message)) || ('HTTP ' + x.status), null); }
   };
   x.send(body ? JSON.stringify(body) : null);
 }
 function GET(p, cb)      { req('GET',  API + p, null, cb); }
 function POST(p, b, cb)  { req('POST', API + p, b, cb); }
 function PUT(p, b, cb)   { req('PUT',  API + p, b, cb); }
+function DELETE(p, cb)   { req('DELETE', API + p, null, cb); }
 
 /* --------------------------------------------------------------------------
    Toast
@@ -1964,9 +2116,11 @@ function makeRuleRow(r) {
   var div = document.createElement('div');
   div.className = 'rule-row' + (S.rule && S.rule.fullPath === r.fullPath ? ' selected' : '');
 
-  var badge = r.drifted        ? '<span class="badge b-drift">DRIFT</span>' :
-              !r.inVersionStore ? '<span class="badge b-new">NEW</span>' :
-                                  '<span class="badge b-ok">OK</span>';
+  var badge = r.drifted                       ? '<span class="badge b-drift">DRIFT</span>' :
+              !r.inVersionStore               ? '<span class="badge b-new">NEW</span>' :
+              !r.acknowledged                 ? '<span class="badge b-new" title="Snapshotted but not yet acknowledged">NEW</span>' :
+              !r.onSystem                     ? '<span class="badge b-orphan" title="Version history exists but rule is not on the BIG-IP">ORPHAN</span>' :
+                                                '<span class="badge b-ok">OK</span>';
 
   div.innerHTML =
     '<div style="flex:1;min-width:0">' +
@@ -2033,6 +2187,37 @@ function loadOverview(r) {
   document.getElementById('ov-hash').textContent = r.latestHash ? ('Live: ' + r.latestHash) : 'Not yet versioned';
   setEditMode(false);
 
+  // onSystem notice
+  var noticeEl = document.getElementById('ov-not-on-system');
+  if (!noticeEl) {
+    noticeEl = document.createElement('div');
+    noticeEl.id = 'ov-not-on-system';
+    noticeEl.style.cssText = 'margin:10px 0;padding:10px 14px;border-radius:6px;font-size:13px;'
+      + 'background:var(--warning-bg);color:var(--warning);border:1px solid var(--warning);display:none';
+    noticeEl.innerHTML = '<strong>Not on system</strong> &mdash; This iRule exists in version history '
+      + 'but is not currently deployed on the BIG-IP. You can deploy any version from the History tab to restore it.';
+    var tabContent = document.getElementById('tab-overview');
+    if (tabContent) { tabContent.insertBefore(noticeEl, tabContent.firstChild); }
+  }
+  noticeEl.style.display = (r.onSystem === false) ? 'block' : 'none';
+
+  // Acknowledge button
+  var ackBtn = document.getElementById('btn-acknowledge');
+  if (ackBtn) {
+    if (!r.acknowledged) {
+      ackBtn.style.display = 'inline-block';
+      if (r.inVersionStore) {
+        ackBtn.disabled = false; ackBtn.style.opacity = '1'; ackBtn.style.cursor = 'pointer';
+        ackBtn.title = 'Mark as reviewed — clears the NEW badge';
+      } else {
+        ackBtn.disabled = true; ackBtn.style.opacity = '0.45'; ackBtn.style.cursor = 'not-allowed';
+        ackBtn.title = 'Waiting for baseline snapshot — will be available after the next poll';
+      }
+    } else {
+      ackBtn.style.display = 'none';
+    }
+  }
+
   if (!r.latestHash) { setEditorContent('# This iRule has no versions yet.', false); return; }
 
   GET('/rules/' + rp(r) + '/versions/' + r.latestHash, function (err, data) {
@@ -2062,8 +2247,19 @@ function setEditorContent(content, editable) {
 function setEditMode(on) {
   S.editMode = on;
   document.getElementById('btn-edit').style.display   = on ? 'none' : 'inline-block';
-  document.getElementById('btn-save').style.display   = on ? 'inline-block' : 'none';
+  document.getElementById('btn-save').style.display   = 'none';
   document.getElementById('btn-cancel').style.display = on ? 'inline-block' : 'none';
+  var panel = document.getElementById('deploy-inline');
+  if (panel) {
+    if (on) {
+      panel.classList.add('open');
+      document.getElementById('deploy-inline-reason').value = '';
+      document.getElementById('deploy-inline-error').style.display = 'none';
+      document.getElementById('btn-inline-deploy').disabled = true;
+    } else {
+      panel.classList.remove('open');
+    }
+  }
   if (S.editor) { S.editor.setOption('readOnly', !on); if (on) { S.editor.focus(); } }
 }
 
@@ -2076,7 +2272,14 @@ function loadHistory() {
   hideDiff();
 
   GET('/rules/' + rp(S.rule) + '/versions', function (err, data) {
-    if (err) { el.innerHTML = '<div class="error-row">Failed: ' + esc(err) + '</div>'; return; }
+    if (err) {
+      if (String(err).indexOf('404') !== -1) {
+        el.innerHTML = '<div class="loading-row">No version history yet — this rule has not been tracked.</div>';
+      } else {
+        el.innerHTML = '<div class="error-row">Failed: ' + esc(err) + '</div>';
+      }
+      return;
+    }
     S.versions = (data.versions || []).slice().reverse();
     renderVersionList();
   });
@@ -2266,6 +2469,7 @@ function openDeployModal(targetHash) {
   var diffWrap = document.getElementById('deploy-diff-wrap');
   diffWrap.innerHTML = '<div class="loading-row">Loading diff…</div>';
 
+  _clearDeployError();
   document.getElementById('deploy-modal').classList.add('open');
 
   if (currentHash && currentHash !== targetHash) {
@@ -2301,10 +2505,10 @@ function confirmDeploy() {
     POST('/rules/' + rp(r) + '/snapshot',
       { content: p.editedContent, message: reason, author: getAuthor() },
       function (err, data) {
-        if (err) {
+        if (err || (data && data.ok === false)) {
           btn.disabled = false;
           btn.textContent = 'Save & Deploy';
-          toast('error', 'Deploy failed', String(err));
+          _showDeployError((data && data.error) || err);
           return;
         }
         var h = data.version && data.version.hash;
@@ -2363,8 +2567,7 @@ function pollTask(r, hash, taskId, btn) {
       if (task.status === 'completed') { onDeployOK(r, hash); }
       else {
         btn.disabled = false; btn.textContent = 'Deploy';
-        toast('error', 'Deploy failed', task.error || 'Unknown error');
-        closeDeployModal();
+        _showDeployError(task.error || 'Unknown error');
       }
     });
   }
@@ -2509,14 +2712,14 @@ function showDashboard() {
 
 function renderDashboardHealth() {
   var rules      = S.rules;
-  var drifted    = rules.filter(function (r) { return r.drifted; }).length;
-  var versioned  = rules.filter(function (r) { return r.inVersionStore; }).length;
-  var unversioned = rules.length - versioned;
+  var drifted  = rules.filter(function (r) { return r.drifted; }).length;
+  var newRules = rules.filter(function (r) { return r.onSystem && (!r.inVersionStore || !r.acknowledged); }).length;
+  var orphaned = rules.filter(function (r) { return r.inVersionStore && !r.onSystem; }).length;
 
-  document.getElementById('db-s-tracked').textContent    = rules.length;
-  document.getElementById('db-s-drift').textContent      = drifted;
-  document.getElementById('db-s-versioned').textContent  = versioned;
-  document.getElementById('db-s-unversioned').textContent = unversioned;
+  document.getElementById('db-s-tracked').textContent     = rules.length;
+  document.getElementById('db-s-drift').textContent       = drifted;
+  document.getElementById('db-s-unversioned').textContent = newRules;
+  document.getElementById('db-s-orphan').textContent      = orphaned;
 }
 
 function loadDashboardActivity() {
@@ -2637,6 +2840,305 @@ function testWebhook() {
   });
 }
 
+/* --------------------------------------------------------------------------
+   Deploy error helpers (modal)
+-------------------------------------------------------------------------- */
+function _formatTclError(msg) {
+  var s = String(msg)
+    .replace(/^[0-9a-f]+:[0-9]+:\s*/i, '')
+    .replace(/^Rule \[[^\]]+\] error:\s*/, '')
+    .trim();
+  if (!s) { return String(msg); }
+  // 'incomplete command' means an unclosed { block — make it actionable
+  if (s === 'incomplete command') {
+    return 'incomplete command — one or more { blocks are not closed.\n'
+      + 'Check that every opening { has a matching closing }.';
+  }
+  // Insert newline before each new /path:line: error that follows a closing ]
+  s = s.replace(/\](?=\/\w+\/\w[^:]*:\d)/g, ']\n');
+  return s.trim();
+}
+
+function _showDeployError(msg) {
+  var el = document.getElementById('deploy-error');
+  if (!el) { return; }
+  el.textContent = _formatTclError(msg);
+  el.style.display = 'block';
+  var body = el.closest ? el.closest('.modal-body') : el.parentElement;
+  if (body) { body.scrollTop = body.scrollHeight; }
+}
+
+function _clearDeployError() {
+  var el = document.getElementById('deploy-error');
+  if (el) { el.style.display = 'none'; el.textContent = ''; }
+}
+
+/* --------------------------------------------------------------------------
+   Inline deploy panel (below editor)
+-------------------------------------------------------------------------- */
+function _executeInlineDeploy() {
+  var r = S.rule;
+  if (!r || !S.editor) { return; }
+  var content = S.editor.getValue();
+  if (!content || !content.trim()) {
+    toast('warning', 'Empty content', 'Cannot deploy an empty iRule.');
+    return;
+  }
+  var reason = document.getElementById('deploy-inline-reason').value.trim();
+  if (!reason) { return; }
+  var btn   = document.getElementById('btn-inline-deploy');
+  var errEl = document.getElementById('deploy-inline-error');
+  btn.disabled = true;
+  btn.textContent = 'Deploying...';
+  errEl.style.display = 'none';
+  var wasNew = !r.inVersionStore && !r.onSystem;
+  POST('/rules/' + rp(r) + '/snapshot',
+    { content: content, message: reason, author: getAuthor() },
+    function (err, data) {
+      btn.disabled = false;
+      btn.textContent = 'Save & Deploy';
+      if (err || (data && data.ok === false)) {
+        var msg = (data && data.error) || err;
+        errEl.textContent = _formatTclError(msg);
+        errEl.style.display = 'block';
+        return;
+      }
+      var h = data.version && data.version.hash;
+      setEditMode(false);
+      toast('success', 'Saved & deployed', r.fullPath + (h ? ' -> ' + h : ''));
+      if (wasNew) { PUT('/rules/' + rp(r) + '/acknowledge', {}, function () {}); }
+      _refreshRuleAfterDeploy(r);
+    });
+}
+
+/* --------------------------------------------------------------------------
+   Acknowledge rule
+-------------------------------------------------------------------------- */
+function acknowledgeRule() {
+  var r = S.rule;
+  if (!r || r.acknowledged) { return; }
+  var btn = document.getElementById('btn-acknowledge');
+  if (btn) { btn.disabled = true; btn.textContent = 'Acknowledging...'; }
+  PUT('/rules/' + rp(r) + '/acknowledge', {}, function (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '\u2713 Acknowledge'; }
+    if (err) { toast('error', 'Acknowledge failed', String(err)); return; }
+    r.acknowledged = true;
+    S.rule = r;
+    for (var i = 0; i < S.rules.length; i++) {
+      if (S.rules[i].fullPath === r.fullPath) { S.rules[i].acknowledged = true; break; }
+    }
+    if (btn) { btn.style.display = 'none'; }
+    loadRuleList();
+    toast('success', 'Acknowledged', r.fullPath + ' marked as reviewed.');
+  });
+}
+
+/* --------------------------------------------------------------------------
+   Remove rule from version store
+-------------------------------------------------------------------------- */
+function promptRemoveFromStore() {
+  var r = S.rule;
+  if (!r) { return; }
+  document.getElementById('remove-rule-name').textContent = r.fullPath;
+  document.getElementById('remove-overlay').style.display = 'flex';
+}
+
+function closeRemoveModal() {
+  document.getElementById('remove-overlay').style.display = 'none';
+}
+
+function confirmRemoveFromStore() {
+  var r = S.rule;
+  if (!r) { closeRemoveModal(); return; }
+  var btn = document.getElementById('btn-remove-confirm');
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+  DELETE('/rules/' + rp(r), function (err) {
+    btn.disabled = false;
+    btn.textContent = 'Delete history';
+    closeRemoveModal();
+    if (err) { toast('error', 'Remove failed', String(err)); return; }
+    toast('success', 'History removed', r.fullPath + ' removed from version store.');
+    S.rule = null;
+    document.getElementById('detail').style.display = 'none';
+    loadRuleList();
+  });
+}
+
+/* --------------------------------------------------------------------------
+   Backup modal
+-------------------------------------------------------------------------- */
+function openBackup() {
+  document.getElementById('backup-overlay').style.display = 'block';
+  document.getElementById('backup-status').textContent = '';
+  var fi = document.getElementById('import-file-input');
+  if (fi) { fi.value = ''; }
+}
+
+function closeBackup() {
+  document.getElementById('backup-overlay').style.display = 'none';
+}
+
+function exportBackup() {
+  var btn = document.getElementById('btn-do-export');
+  var status = document.getElementById('backup-status');
+  btn.disabled = true;
+  btn.textContent = 'Exporting...';
+  status.textContent = 'Creating archive...';
+  POST('/rules/export', {}, function (err, data) {
+    btn.disabled = false;
+    btn.textContent = '\u29bb Download Backup';
+    if (err) { status.textContent = 'Export failed: ' + String(err); toast('error', 'Export failed', String(err)); return; }
+    try {
+      var bytes = atob(data.data);
+      var arr = new Uint8Array(bytes.length);
+      for (var i = 0; i < bytes.length; i++) { arr[i] = bytes.charCodeAt(i); }
+      var blob = new Blob([arr], { type: 'application/gzip' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = data.filename || 'rulbased-backup.tar.gz';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      status.textContent = 'Downloaded ' + data.filename + ' (' + Math.round(data.size / 1024) + ' KB). On-device: ' + data.path;
+      toast('success', 'Backup downloaded', data.filename);
+    } catch (dlErr) {
+      status.textContent = 'Archive created but download failed: ' + dlErr.message;
+    }
+  });
+}
+
+function importBackupFile(file) {
+  if (!file) { return; }
+  var status = document.getElementById('backup-status');
+  status.textContent = 'Reading file...';
+  var reader = new FileReader();
+  reader.onload = function (e) {
+    var b64 = e.target.result.split(',')[1];
+    if (!b64) { status.textContent = 'Could not read file.'; return; }
+    status.textContent = 'Analysing archive...';
+    POST('/rules/import/check', { data: b64 }, function (err, data) {
+      if (err) { status.textContent = 'Could not read archive: ' + String(err); return; }
+      _showImportAnalysis(b64, data);
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function _showImportAnalysis(b64, data) {
+  var status = document.getElementById('backup-status');
+  var s = data.summary || {};
+  var total = (s.identical || 0) + (s.archiveHasNew || 0) + (s.localHasNew || 0) + (s.newToLocal || 0);
+  if (total > 0 && total === (s.newToLocal || 0)) {
+    status.textContent = 'Restoring ' + total + ' rule(s) onto empty local store...';
+    _executeImport(b64, 'merge'); return;
+  }
+  if ((s.archiveHasNew || 0) === 0 && (s.localHasNew || 0) === 0 && (s.newToLocal || 0) === 0) {
+    status.textContent = 'Archive matches local data exactly — nothing to import.';
+    toast('info', 'Already up to date', 'Archive and local store are identical.'); return;
+  }
+  var lines = [];
+  if (s.newToLocal > 0)    { lines.push(s.newToLocal + ' rule(s) in archive not present locally'); }
+  if (s.archiveHasNew > 0) { lines.push(s.archiveHasNew + ' rule(s) have new versions in archive'); }
+  if (s.localHasNew > 0)   { lines.push(s.localHasNew + ' rule(s) have local versions newer than archive'); }
+  if (s.identical > 0)     { lines.push(s.identical + ' rule(s) already up to date'); }
+  var mergeNote, replaceNote, showReplace;
+  if ((s.localHasNew || 0) === 0) {
+    mergeNote = 'Merge will add the new archive versions to local history. Your existing history is preserved.';
+    showReplace = false;
+  } else {
+    mergeNote = 'Merge adds archive versions and keeps your ' + s.localHasNew + ' newer local version(s).';
+    replaceNote = 'Replace overwrites local history. Your ' + s.localHasNew + ' newer local version(s) will be lost.';
+    showReplace = true;
+  }
+  var inner = '<div style="margin-bottom:8px">' + lines.join('<br>') + '</div>'
+    + '<div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">' + mergeNote + '</div>'
+    + '<button id="btn-import-merge" style="font-size:12px;padding:4px 12px">Merge</button>';
+  if (showReplace) {
+    inner += ' <button id="btn-import-replace" style="font-size:12px;padding:4px 12px;margin-left:6px;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer">Replace (overwrites local)</button>';
+  }
+  inner += ' <button id="btn-import-cancel" style="font-size:12px;padding:4px 12px;margin-left:6px;background:var(--bg);border:1px solid var(--border)">Cancel</button>';
+  if (showReplace) { inner += '<div style="font-size:11px;color:#dc2626;margin-top:6px">' + replaceNote + '</div>'; }
+  status.innerHTML = inner;
+  document.getElementById('btn-import-merge').onclick = function () { _executeImport(b64, 'merge'); };
+  if (showReplace) { document.getElementById('btn-import-replace').onclick = function () { _executeImport(b64, 'replace'); }; }
+  document.getElementById('btn-import-cancel').onclick = function () { status.textContent = 'Import cancelled.'; };
+}
+
+function _executeImport(b64, conflictMode) {
+  var status = document.getElementById('backup-status');
+  status.textContent = 'Importing (' + conflictMode + ')...';
+  POST('/rules/import', { data: b64, conflictMode: conflictMode }, function (err, data) {
+    if (err) { status.textContent = 'Import failed: ' + String(err); toast('error', 'Import failed', String(err)); return; }
+    var r = data.report || {};
+    var parts = [];
+    if (r.imported > 0) { parts.push(r.imported + ' rule(s) added'); }
+    if (r.merged > 0)   { parts.push(r.merged + ' rule(s) updated'); }
+    if (r.replaced > 0) { parts.push(r.replaced + ' rule(s) replaced'); }
+    if (parts.length === 0) { parts.push('no changes needed'); }
+    var msg = parts.join(', ') + '.';
+    status.textContent = 'Done: ' + msg;
+    toast('success', 'Restore complete', msg);
+    if (r.imported > 0 || r.merged > 0 || r.replaced > 0) { closeBackup(); loadRuleList(); }
+  });
+}
+
+/* --------------------------------------------------------------------------
+   Create new iRule
+-------------------------------------------------------------------------- */
+function openCreateRule() {
+  var sel = document.getElementById('create-partition');
+  sel.innerHTML = '';
+  var seen = {}, partitions = ['Common'];
+  (S.rules || []).forEach(function (r) {
+    if (r.partition && !seen[r.partition]) { seen[r.partition] = true; if (r.partition !== 'Common') { partitions.push(r.partition); } }
+  });
+  partitions.sort().forEach(function (p) {
+    var opt = document.createElement('option'); opt.value = p; opt.textContent = p; sel.appendChild(opt);
+  });
+  sel.value = 'Common';
+  document.getElementById('create-name').value = '';
+  document.getElementById('create-error').style.display = 'none';
+  document.getElementById('create-overlay').style.display = 'flex';
+  setTimeout(function () { document.getElementById('create-name').focus(); }, 50);
+}
+
+function closeCreateModal() {
+  document.getElementById('create-overlay').style.display = 'none';
+}
+
+function confirmCreateRule() {
+  var partition = document.getElementById('create-partition').value.trim();
+  var name      = document.getElementById('create-name').value.trim();
+  var errEl     = document.getElementById('create-error');
+  if (!partition) { errEl.textContent = 'Partition is required.'; errEl.style.display = 'block'; return; }
+  if (!name) { errEl.textContent = 'iRule name is required.'; errEl.style.display = 'block'; return; }
+  if (!/^[a-zA-Z0-9_\-.]+$/.test(name)) {
+    errEl.textContent = 'Name may only contain letters, numbers, hyphens, underscores and dots.';
+    errEl.style.display = 'block'; return;
+  }
+  var fullPath = '/' + partition + '/' + name;
+  for (var i = 0; i < S.rules.length; i++) {
+    if (S.rules[i].fullPath === fullPath) {
+      errEl.textContent = fullPath + ' already exists. Select it from the list to edit.';
+      errEl.style.display = 'block'; return;
+    }
+  }
+  closeCreateModal();
+  var newRule = {
+    partition: partition, name: name, fullPath: fullPath,
+    versionCount: 0, latestHash: null, latestTimestamp: null,
+    latestMessage: null, latestAuthor: null, drifted: false,
+    retention: null, inVersionStore: false, onSystem: false, acknowledged: false
+  };
+  S.rules.push(newRule);
+  selectRule(newRule);
+  setTimeout(function () {
+    setEditMode(true);
+    setEditorContent('when HTTP_REQUEST {\n    # iRule: ' + fullPath + '\n}\n', true);
+  }, 100);
+}
+
+
 function saveSettings() {
   var p = {
     pollIntervalSeconds:  parseInt(document.getElementById('s-poll').value, 10) || 300,
@@ -2667,28 +3169,7 @@ function saveSettings() {
 /* --------------------------------------------------------------------------
    Inline editor Save & Deploy
 -------------------------------------------------------------------------- */
-function saveAndDeploy() {
-  var r = S.rule;
-  if (!r || !S.editor) { return; }
-
-  var editedContent = S.editor.getValue();
-  if (!editedContent || !editedContent.trim()) {
-    toast('warning', 'Empty content', 'Cannot deploy an empty iRule.');
-    return;
-  }
-
-  // Warn if content is unchanged
-  if (r.latestHash) {
-    var currentDisplay = S.editor.getValue();
-    // We'll proceed regardless — user explicitly clicked Save & Deploy
-  }
-
-  // Show a reason prompt before deploying — reuse the deploy modal
-  // but pre-populate it with the edited content as the target.
-  // We do this by first opening the reason dialog, then on confirm
-  // we POST the snapshot+deploy in one step.
-  _promptAndDeploy(r, editedContent);
-}
+function saveAndDeploy() { /* replaced by inline deploy panel */ }
 
 function _promptAndDeploy(r, content) {
   // Populate deploy modal fields
@@ -2702,6 +3183,7 @@ function _promptAndDeploy(r, content) {
   var diffWrap = document.getElementById('deploy-diff-wrap');
   diffWrap.innerHTML = '<div class="loading-row">Computing diff against live version…</div>';
 
+  _clearDeployError();
   document.getElementById('deploy-modal').classList.add('open');
 
   // Store pending content on state so confirmDeploy can pick it up
@@ -2842,6 +3324,31 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btn-sclose').onclick  = closeSettings;
   document.getElementById('btn-scancel').onclick = closeSettings;
   document.getElementById('btn-ssave').onclick   = saveSettings;
+  document.getElementById('btn-backup').onclick       = openBackup;
+  document.getElementById('btn-backup-close').onclick = closeBackup;
+  document.getElementById('btn-backup-done').onclick  = closeBackup;
+  document.getElementById('btn-do-export').onclick    = exportBackup;
+  document.getElementById('btn-do-import').onclick    = function () { document.getElementById('import-file-input').click(); };
+  document.getElementById('import-file-input').onchange = function (e) { importBackupFile(e.target.files[0]); e.target.value = ''; };
+  document.getElementById('btn-create-rule').onclick  = openCreateRule;
+  document.getElementById('btn-create-close').onclick  = closeCreateModal;
+  document.getElementById('btn-create-cancel').onclick = closeCreateModal;
+  document.getElementById('btn-create-confirm').onclick= confirmCreateRule;
+  document.getElementById('create-name').addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.keyCode === 13) { confirmCreateRule(); } });
+  document.getElementById('btn-acknowledge').onclick          = acknowledgeRule;
+  document.getElementById('btn-remove-from-store').onclick = promptRemoveFromStore;
+  document.getElementById('btn-remove-close').onclick      = closeRemoveModal;
+  document.getElementById('btn-remove-cancel').onclick     = closeRemoveModal;
+  document.getElementById('btn-remove-confirm').onclick    = confirmRemoveFromStore;
+  document.getElementById('btn-inline-deploy').onclick = _executeInlineDeploy;
+  document.getElementById('btn-inline-cancel').onclick = function () { setEditMode(false); };
+  document.getElementById('deploy-inline-reason').addEventListener('input', function () {
+    document.getElementById('btn-inline-deploy').disabled = !this.value.trim();
+  });
+  document.getElementById('deploy-inline-reason').addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.keyCode === 13) && e.ctrlKey) { _executeInlineDeploy(); }
+  });
+  document.getElementById('btn-dconfirm').onclick = confirmDeploy;
   document.getElementById('btn-test-webhook').onclick = testWebhook;
   document.getElementById('settings-overlay').onclick = function (e) {
     if (e.target === this) { closeSettings(); }

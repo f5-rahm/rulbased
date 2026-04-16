@@ -12,6 +12,12 @@ var logger = require('./logger');
  *
  * Settings are written by the iApps LX block's inputProperties on
  * BINDING, and can also be updated directly via the settings REST worker.
+ *
+ * schemaVersion is managed here alongside user settings.  It is an integer
+ * written by migrations.js and read on startup.  Missing key → treated as 0
+ * (pre-Phase-6 install).  Users should not edit this field manually; if they
+ * do and corrupt it, missing/NaN is handled gracefully by treating it as 0
+ * (safe: re-runs migrations, which are idempotent).
  */
 
 var _defaults = {
@@ -24,7 +30,8 @@ var _defaults = {
   iruleLinks: true,
   tclManPageLinks: true,
   debugMode: false,
-  dashboardAuditLimit: 15
+  dashboardAuditLimit: 15,
+  schemaVersion: 0
 };
 
 var _current = JSON.parse(JSON.stringify(_defaults));
@@ -60,7 +67,6 @@ function load(dataDir) {
     });
     logger.info('settings: loaded from ' + settingsFile);
   } catch (e) {
-    // No settings file yet — use defaults; will be written on first update
     logger.debug('settings: no settings file found, using defaults');
   }
 }

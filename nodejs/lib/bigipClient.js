@@ -158,7 +158,14 @@ function patch(urlPath, body, cb) {
     res.on('data', function (chunk) { respBody += chunk; });
     res.on('end', function () {
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        return cb(new Error('HTTP ' + res.statusCode + ' from PATCH ' + urlPath + ': ' + respBody));
+        var errMsg = respBody;
+        try {
+          var errObj = JSON.parse(respBody);
+          if (errObj && errObj.message) { errMsg = errObj.message; }
+        } catch (pe) { /* use raw body */ }
+        var e = new Error(errMsg);
+        e.statusCode = res.statusCode;
+        return cb(e);
       }
       try {
         cb(null, JSON.parse(respBody));
@@ -176,6 +183,59 @@ function patch(urlPath, body, cb) {
   req.setTimeout(30000, function () {
     req.abort();
     cb(new Error('Timeout on PATCH ' + urlPath));
+  });
+
+  req.write(bodyStr, 'utf8');
+  req.end();
+}
+
+
+function post(urlPath, body, cb) {
+  var bodyStr = JSON.stringify(body);
+  var options = {
+    host: MGMT_HOST,
+    port: MGMT_PORT,
+    path: urlPath,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': AUTH_HEADER,
+      'Content-Length': Buffer.byteLength(bodyStr, 'utf8')
+    }
+  };
+
+  logger.debug('bigipClient.post: ' + urlPath);
+
+  var req = http.request(options, function (res) {
+    var respBody = '';
+    res.setEncoding('utf8');
+    res.on('data', function (chunk) { respBody += chunk; });
+    res.on('end', function () {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        // Try to extract the clean message from iControl REST JSON error body
+        var errMsg = respBody;
+        try {
+          var errObj = JSON.parse(respBody);
+          if (errObj && errObj.message) { errMsg = errObj.message; }
+        } catch (pe) { /* use raw body */ }
+        return cb(new Error(errMsg));
+      }
+      try {
+        cb(null, JSON.parse(respBody));
+      } catch (e) {
+        cb(new Error('Failed to parse POST response from ' + urlPath + ': ' + e.message));
+      }
+    });
+  });
+
+  req.on('error', function (err) {
+    logger.error('bigipClient.post error on ' + urlPath + ': ' + err.message);
+    cb(err);
+  });
+
+  req.setTimeout(30000, function () {
+    req.abort();
+    cb(new Error('Timeout on POST ' + urlPath));
   });
 
   req.write(bodyStr, 'utf8');
@@ -201,11 +261,27 @@ function deployRule(partition, name, content, cb) {
   logger.info('bigipClient.deployRule: PATCH ' + urlPath);
 
   patch(urlPath, { apiAnonymous: content }, function (err, result) {
-    if (err) {
-      logger.error('bigipClient.deployRule failed: ' + err.message);
-      return cb(err);
+    if (!err) {
+      logger.info('bigipClient.deployRule: PATCH success, generation=' + (result && result.generation));
+      return cb(null);
     }
-    logger.info('bigipClient.deployRule: success, generation=' + (result && result.generation));
-    cb(null);
+
+    // 404 means the rule does not exist yet — create it with POST
+    if (err.statusCode === 404 || (err.message && err.message.indexOf('HTTP 404') !== -1)) {
+      logger.info('bigipClient.deployRule: rule not found, creating via POST');
+      var fullName = '/' + partition + '/' + name;
+      post('/mgmt/tm/ltm/rule', { name: fullName, apiAnonymous: content }, function (postErr, postResult) {
+        if (postErr) {
+          logger.error('bigipClient.deployRule POST failed: ' + postErr.message);
+          return cb(postErr);
+        }
+        logger.info('bigipClient.deployRule: POST success (rule created), generation=' + (postResult && postResult.generation));
+        cb(null);
+      });
+      return;
+    }
+
+    logger.error('bigipClient.deployRule PATCH failed: ' + err.message);
+    cb(err);
   });
 }

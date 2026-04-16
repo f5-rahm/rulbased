@@ -15,8 +15,8 @@ along the lines of:
 > I am building an iApps LX extension for BIG-IP called "Rülbased".
 > The attached PLANNING.md contains all spec decisions, data models, REST API
 > definitions, GUI specifications, and the current implementation status.
-> Phase 5 is complete. Please read the planning doc and help me continue with
-> Phase 6 (import/export + upgrade hardiness).
+> Phase 6 is complete. Please read the planning doc and help me continue with
+> Phase 7 (package rename: irule-versioner → rulbased).
 
 Upload both this file and the phase source zip (`irule-versioner-phase5.zip`)
 to give the new session full context.
@@ -932,42 +932,205 @@ Deliverables completed:
 
 ---
 
-### Phase 6 — Import/export + upgrade hardiness (2 weeks)
 
-**Background — BIG-IP upgrade behaviour:**
-After a TMOS version upgrade, the entire `/var/config/rest/iapps/` directory
-is wiped — both the RPM-managed code *and* the `data/` subdirectory containing
-all version history. The RPM simply needs reinstalling, but the `data/`
-directory is the irreplaceable part. Until Phase 6's import/export is
-implemented, operators should back up `data/` to the `/shared/` partition
-(which persists across upgrades) before any TMOS upgrade:
+### Phase 6 — Import/export + upgrade hardiness + GUI enhancements ✅ COMPLETE
+
+**Status:** Implemented and validated on BIG-IP TMOS 21.x. Phase 6 expanded
+significantly beyond the original import/export scope to include a full GUI
+overhaul with iRule creation, inline editing, and operator workflow improvements.
+
+**Deliverables completed:**
+
+*Backend (Node.js):*
+- `lib/migrations.js` — schema migration framework; v0→v1 orphaned blob sweep;
+  `acknowledged` field cleanup; `CURRENT_SCHEMA_VERSION=1`
+- `versionStore.js` — `_newManifest` sets `acknowledged: false` on new rules;
+  `listRules` surfaces `acknowledged` flag (existing manifests without field
+  treated as `true`); `acknowledgeRule()`; `exportArchive()`; `importArchive()`;
+  `_analyseImport()` with hash-set comparison; `pruneOrphanedBlobs()` on retention trim
+- `bigipClient.js` — `post()` helper; PATCH and POST error handlers extract clean
+  message from iControl REST JSON error body and attach `.statusCode` to Error;
+  `deployRule` uses `err.statusCode === 404` for create-via-POST fallback
+- `rulesWorker.js` — `onDelete` handler; `DELETE /rules/:p/:n` removes store entry;
+  `PUT /rules/:p/:n/acknowledge`; `POST /rules/export`; `POST /rules/import`;
+  `POST /rules/import/check`; deploy errors return HTTP 200 `{ ok: false, error }`
+  to bypass restnoded body interception; `/shared/rulbased-backups` hardcoded
+  (not user-configurable); `RPM %post` must create and chown this directory
+- `settings.js` — added `schemaVersion: 0` default; removed `backupDirectory`
+
+*GUI (app.html):*
+- **Dashboard health grid** — 4 stats: Tracked, Drifted, New, Orphaned; each
+  with title tooltip; "Orphaned" counter in F5 red
+- **ORPHAN badge** — F5 red (`#E4002B`) with white text, replaces DEL; for rules
+  with history but no live BIG-IP object
+- **NEW badge** — stays NEW until manually acknowledged; greyed-out Acknowledge
+  button until baseline snapshot exists; auto-acknowledges on first deploy
+- **Acknowledge button** — in Overview toolbar; clears NEW badge
+- **Remove from store** — red Remove button in toolbar; confirm modal;
+  `DELETE /rules/:p/:n`; does not affect live iRule
+- **Backup & Restore modal** — export downloads `.tar.gz` to browser and saves
+  copy to `/shared/rulbased-backups`; import with hash-level analysis (4
+  scenarios: identical / archive-newer / local-newer / empty-local)
+- **+ New iRule button** — right-aligned in left panel toolbar; modal with
+  partition dropdown (populated from live rule list) and name field; opens
+  editor with starter template; auto-acknowledges on first successful deploy
+- **Inline deploy panel** — slides in below CodeMirror editor when editing;
+  reason field + TCL error display alongside code; replaces Save & Deploy modal;
+  Ctrl+Enter to deploy
+- **Deploy error display** — `_formatTclError()` strips iControl REST error code
+  prefix and `Rule [/P/N] error:` prefix; splits multiple errors onto separate
+  lines; "incomplete command" translated to human-readable explanation
+- **Intro card and changelog** — updated through v1.2.0; feature bullets include
+  create/edit, syslog/webhook, backup/restore
+- `DELETE` HTTP helper in GUI uses XHR (`req()`) not `fetch()` — fetch without
+  `credentials: include` doesn't send BIG-IP session cookie
+- `loadHistory` 404 → "No version history yet" message instead of error
+
+---
+
+### Phase 6 — Lessons learned
+
+- **restnoded intercepts and transforms non-2xx HTTP responses before they reach
+  the browser client.** The response body is not reliably delivered for 4xx/5xx
+  responses. Use HTTP 200 with `{ ok: false, error: message }` for any error that
+  needs to surface a meaningful message in the GUI. Reserve non-2xx codes only for
+  cases where the error message doesn't need to reach the client (e.g. framework
+  routing errors). This applies to 400, 422, 500 — all confirmed affected.
+
+- **`fetch()` without `credentials: 'include'` does not send the BIG-IP session
+  cookie.** All HTTP helpers in the GUI must use `XMLHttpRequest` via the existing
+  `req()` function, including DELETE. `fetch()` appears to work for GET/POST in
+  some contexts because the browser treats those differently from DELETE.
+
+- **JS string literals containing `\n`, `\t`, or other escape sequences must not
+  be written by Python into heredoc content.** Python `\n` in a string becomes a
+  literal newline character in the output file. If that literal newline appears
+  inside a JS single-quoted string, the JS parser sees an unterminated string
+  literal and the file fails to parse entirely — restnoded cannot load the worker
+  and every request returns 404. Use `String.fromCharCode(10)` for newline
+  comparisons and `charCodeAt(N)` for character checks. This applies to any
+  special character in a JS string literal generated by Python.
+
+- **`apiAnonymousBase64` in iControl REST does NOT perform TCL syntax validation.**
+  It stores the content without parsing, marks the rule as errored in TMUI, and
+  returns HTTP 200. Use `apiAnonymous` (plain text) for deploy — validation errors
+  are returned as HTTP 4xx with the TCL error message. `apiAnonymousBase64` is only
+  useful for importing pre-validated content.
+
+- **iControl REST `apiAnonymous` with an unclosed `{` returns "incomplete command"
+  instead of enumerating all errors.** The TCL parser stops at the first incomplete
+  command boundary (open brace at EOF). This is correct and unavoidable with plain
+  `apiAnonymous` — there is no pre-validation endpoint. See Future Considerations
+  for a proper multi-error approach. Current mitigation: translate "incomplete
+  command" to a human-readable explanation in the GUI.
+
+- **`node --check` is available on the build machine and must be used before
+  generating any patch script that touches Node.js files.** A syntax error in
+  any `.js` file prevents the worker from loading — every request returns 404
+  with no indication of which file is broken. Add `node --check` to the patch
+  build checklist.
+
+- **iControl REST error code prefix format is `[0-9a-f]+:[0-9]+:`** (e.g.
+  `01070151:3:`). Strip this before displaying to operators. Also strip the
+  `Rule [/P/N] error:` wrapper. The useful content starts after both prefixes.
+  Multiple errors in a single message are separated by `]/path:line:` — split
+  on `]` followed by `/word/word:digit` to display each on its own line.
+
+- **The `write_file` helper uses `cat > "$tmp"` which reads from stdin to EOF.**
+  Between file sections in a multi-file patch script, the sentinel token (e.g.
+  `EOF_BIGIP`) must appear on a line by itself with no leading/trailing whitespace.
+  A sentinel collision (the token appearing inside a source file) silently
+  truncates the file. Always check all source files for collision before building
+  a patch. Use exact-line matching: `grep -Fxc 'SENTINEL' file` (not `-c` alone
+  which counts partial matches).
+
+---
+
+### Future considerations — complete TCL error reporting
+
+**Problem:** When an iRule has an unclosed `{` brace, iControl REST's TCL parser
+stops at the first incomplete-command boundary and returns only `incomplete command`
+rather than enumerating all syntax errors (missing quotes, unknown events, etc.).
+TMUI gets richer error output because it may submit content differently or because
+the BIG-IP's TMUI-side validation path wraps content differently.
+
+**Options investigated:**
+1. `apiAnonymousBase64` — stores without validation, marks rule errored. Rejected.
+2. Trailing newline append — no effect on `incomplete command`. Rejected.
+3. `tmsh verify sys config` — checks full config, not per-rule, requires config
+   lock, not usable from restnoded uid 198. Rejected.
+
+**Promising approaches for a future phase:**
+- **Create-check-delete pattern:** POST the rule to a scratch partition or with a
+  unique temp name, capture all errors from the response body, then immediately
+  DELETE the rule. This is the only way to get iControl REST to report all errors
+  on content with unclosed braces. Cost: two extra API calls, brief existence of
+  a broken temp rule. Mitigation: use a dedicated `_rulbased_validate` rule name
+  and always DELETE after, even on success. Consider a `POST /rules/validate`
+  endpoint that wraps this pattern.
+- **Client-side TCL brace counter:** Before submitting, count unmatched `{`/`}`
+  pairs in the editor. If unbalanced, show a pre-flight warning: "Unbalanced
+  braces detected — deploy may fail with incomplete command." This doesn't replace
+  server-side validation but gives immediate feedback without an API call.
+
+---
+
+### Phase 7 — Package rename: irule-versioner → rulbased
+
+*(existing Phase 7 content unchanged — see above)*
+
+`/shared/rulbased-backups` must be created and chowned to uid 198 in the RPM
+`%post` scriptlet as part of this phase:
 
 ```bash
-# Pre-upgrade backup (run on BIG-IP)
-tar -czf /shared/rulbased-data-backup-$(date +%Y%m%d).tar.gz \
-  /var/config/rest/iapps/irule-versioner/data/
-
-# Post-upgrade restore (after reinstalling RPM)
-tar -xzf /shared/rulbased-data-backup-<date>.tar.gz -C /
-bigstart restart restnoded
+%post
+mkdir -p /shared/rulbased-backups
+chown 198:498 /shared/rulbased-backups
+chmod 750 /shared/rulbased-backups
 ```
 
-This manual procedure is what Phase 6 will automate and surface in the GUI.
+---
 
-Deliverables:
-- POST `/export` — streams a tar.gz of the full data directory
-- POST `/import` — accepts a tar.gz, validates structure, merges or replaces
-- Import conflict handling: if a rule already has versions, prompt user to
-  merge (append imported versions) or replace (overwrite manifest)
-- **Pre-upgrade backup workflow** in the settings page: one-click export that
-  downloads `rulbased-data-<date>.tar.gz` to the browser; import to restore
-  after reinstalling following a TMOS upgrade
-- Orphaned blob cleanup: on manifest save, remove `.tcl` blobs in the rule
-  directory that are not referenced by any version entry
-- Data migration framework: `lib/migrations.js` — version-stamped migration
-  functions run on startup if stored schema version < current schema version
-- RPM `%post` improvements: detect TMOS version for correct restart command
-- README updates for upgrade procedures
+### Phase 8 — Code review, security audit, and cleanup
+
+**Purpose:** Before cutting v1.0.0 for production use, perform a systematic
+review of the entire codebase to identify and resolve:
+
+- **Dev artifacts:** console.log statements, debug flags left on, placeholder
+  comments, TODO/FIXME markers, commented-out code blocks, test-only endpoints
+  that should be removed or gated
+- **Inconsistencies:** function naming conventions, error response shapes across
+  workers (some use `{ error }`, some `{ ok, error }` — standardise), HTTP status
+  codes used for each error class, audit log `action` value vocabulary (some use
+  hyphens, some underscores)
+- **Security concerns:** input validation on all user-supplied fields (partition
+  names, rule names, import archive contents — path traversal prevention on tar
+  extract); webhook URL validation (reject non-http/https schemes); audit log
+  injection prevention; confirm no credentials logged anywhere; review `isPublic`
+  and `isPassThrough` settings on all workers (should unauthenticated requests
+  be possible?); HMAC comparison uses `===` not `crypto.timingSafeEqual` —
+  fix timing oracle
+- **Data architecture issues:** audit log is unbounded append-only with no
+  rotation — add configurable max size or age-based rotation; `_tasks` in-memory
+  Map has no upper bound — add eviction; orphaned blob cleanup only runs on
+  retention trim, not on manifest delete — ensure `_deleteRuleFromStore` also
+  cleans blobs; `settings.json` is read into memory on startup and written
+  atomically on update — confirm write is truly atomic (temp file + rename)
+- **API surface review:** any endpoints returning 500 that should return 400;
+  any endpoints missing input validation; any endpoints that could be merged or
+  removed; confirm all routes are documented in PLANNING.md REST API table
+- **Node 6 compatibility pass:** confirm no ES6+ syntax has crept in; run
+  `node --check` on all files (add to build checklist permanently)
+- **Performance:** poll worker holds `bigipClient.listAllRules()` result in
+  memory during comparison — confirm no unbounded growth for large rule sets;
+  diff computation is O(n²) LCS — acceptable for typical iRule sizes but
+  document the limit
+
+**Deliverables:**
+- Annotated issue list with severity (blocker / should-fix / nice-to-have)
+- All blockers and should-fixes resolved before cutting production RPM
+- PLANNING.md updated with any new architectural decisions
+- README updated with any changed behaviour
 
 ---
 
@@ -1074,7 +1237,7 @@ irule-versioner/
 │       ├── settings.js            ← in-memory settings + persistence ✅
 │       ├── blockUtil.js           ← iApps LX state transition helpers ✅
 │       ├── logger.js              ← restnoded logger wrapper ✅
-│       └── migrations.js          ← schema migration framework (Phase 6)
+│       ├── migrations.js          ← schema migration framework ✅
 ├── presentation/
 │   ├── index.html                 ← embedded summary widget (Phase 1) ✅
 │   └── app.html                   ← full-page GUI, CodeMirror + iRules overlay inlined (Phase 2+3) ✅

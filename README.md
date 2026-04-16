@@ -43,7 +43,7 @@ infrastructure.
 - Full-page master-detail SPA at `https://<bigip>/mgmt/shared/irule-versioner/ui`
 - Searchable iRule list with flat / by-partition grouping toggle
 - Overview tab: live TCL viewer with CodeMirror syntax highlighting
-- Inline editor: click Edit to modify a rule, Save & Deploy deploys atomically
+- Inline editor: click Edit to modify a rule
 - History tab: version timeline, two-version compare, side-by-side colour-coded diff
 - Draggable resize handle between version list and diff pane
 - Two-step deploy flow: diff preview + mandatory change reason field
@@ -57,35 +57,47 @@ infrastructure.
 - **Events** (`HTTP_REQUEST`, `CLIENT_ACCEPTED`, etc.) highlighted in F5 red (`#E4002B`)
 - **Namespace prefixes + `::` separator** (`HTTP::`) also in F5 red
 - **Namespace subcommands** (`uri`, `sessionid`, etc.) in jade green (`#009639`)
-- **Standard TCL commands** (`string`, `lindex`, `foreach`, etc.) underlined in their default colour when TCL links are enabled
-- `$variable::...` constructs correctly excluded from highlighting
-- Vocabulary sourced directly from CloudDocs (~130 events, ~75 namespace prefixes with full command lists)
-- Dotted underline + pointer cursor on all token classes when the corresponding link setting is on — immediately signals what is clickable
-- **Click-to-docs**: click any highlighted token to open the reference page in a new tab — works in both read-only and edit mode
-  - iRules events → `https://clouddocs.f5.com/api/irules/<EVENT>.html`
-  - Namespace commands → `https://clouddocs.f5.com/api/irules/<NS>__<cmd>.html`
-  - Standard TCL commands → `https://www.tcl-lang.org/man/tcl8.4/TclCmd/<cmd>.htm`
-- All link types independently togglable in Settings → Editor (both on by default)
-- Settings loaded on page startup — all toggles take effect immediately after a hard refresh without opening the settings modal
-- Debug logging toggle in Settings → Editor (off by default) — logs click target, coordinates, and resolved URL to the browser console
+- **Standard TCL commands** underlined in their default colour when TCL links are enabled
+- **Click-to-docs**: click any highlighted token to open the reference page in a new tab
+- All link types independently togglable in Settings → Editor
 
 ### Phase 4 — Dashboard + Rülbased rebrand
-- **Dashboard homepage** — shown on initial load; click the header title to return from any rule-detail view
-- Product description and feature summary in the dashboard intro card
-- **System health grid** — rules tracked, drifted, with history, not yet tracked
-- **Recent activity feed** — last N audit entries across all rules, with action badges; clicking a row navigates to the rule
+- **Dashboard homepage** — shown on initial load; click the header title to return
+- **System health grid** — rules tracked, drifted, new (untracked), orphaned
+- **Recent activity feed** — last N audit entries across all rules with action badges
 - **Changelog panel** — release history inlined in the dashboard
-- **Configurable activity feed limit** (`dashboardAuditLimit`, default 15) in Settings → Dashboard
 - **Rülbased branding** — "Rül" in white, "based" in F5 blue italic (`#0072b0`)
 
 ### Phase 5 — Syslog + webhook notifications
-- **Syslog** on every deploy, rollback, and (optionally) external drift event — written to `/var/log/ltm` via `local0.notice`; tag `irule-versioner` for easy grepping
-- **Webhook HTTP/HTTPS POST** to any URL (Slack incoming webhook, Teams, PagerDuty, custom endpoint) with structured JSON payload
-- **HMAC-SHA256 signing** — optional `X-Hub-Signature-256` header when a webhook secret is configured, using the same format as GitHub webhooks
-- **Retry logic** — 3 attempts with 5 s async backoff; total failure recorded in the audit log as a `webhook-failed` entry
-- **`webhookOnDrift` toggle** — webhook on external-change events is off by default to avoid noise; syslog always fires on drift when syslog is enabled
-- **Test endpoints** — `GET /settings/test-syslog` and `GET /settings/test-webhook` for field diagnostics without needing to trigger a real deploy
-- **Test Webhook button** in the Settings panel
+- **Syslog** on every deploy, rollback, and drift event — `/var/log/ltm` and
+  `/var/log/audit`; tag `rulbased`
+- **Webhook HTTP/HTTPS POST** with structured JSON payload and optional
+  HMAC-SHA256 `X-Hub-Signature-256` signing (matches GitHub webhook format)
+- **Retry logic** — 3 attempts with 5 s async backoff
+- **Test endpoints** — `GET /settings/test-syslog` and `GET /settings/test-webhook`
+
+### Phase 6 — Import/export, upgrade hardiness, and GUI enhancements
+- **Backup & Restore** — one-click export downloads full version history as
+  `.tar.gz`; import with hash-level conflict analysis (merge or replace per rule)
+- **Create iRule** — write new iRules directly in the built-in editor with
+  syntax error feedback inline; TCL errors shown below the editor alongside code
+- **Inline deploy panel** — reason field and error display slide in below the
+  editor; no modal overlay; Ctrl+Enter to deploy
+- **TCL error display** — iControl REST error prefix stripped; multiple errors
+  split onto separate lines; "incomplete command" translated to human-readable
+  explanation
+- **Orphaned rules** — ORPHAN badge (F5 red) for rules with history but no
+  live BIG-IP object; Orphaned counter in dashboard health grid
+- **Acknowledge workflow** — new rules show NEW badge until explicitly
+  acknowledged; auto-acknowledges on first deploy from the create workflow
+- **Remove from store** — delete version history for a rule without affecting
+  the live iRule on the BIG-IP
+- **Dashboard health** — four stats (Tracked, Drifted, New, Orphaned) with
+  inline tooltips; New = on-system untracked + unacknowledged
+- **Schema migration framework** (`migrations.js`) — version-stamped startup
+  migrations; v0→v1 orphaned blob sweep
+- **On-device backup directory** — backups saved to `/shared/rulbased-backups`
+  (hardcoded; survives TMOS upgrades); RPM `%post` must create and chown to uid 198
 
 ---
 
@@ -99,6 +111,15 @@ infrastructure.
 | curl (build machine only) | Any recent version |
 
 The BIG-IP user account used for install must have the **Administrator** role.
+
+The directory `/shared/rulbased-backups` must exist and be owned by uid 198
+(restnoded). This is handled by the RPM `%post` scriptlet in Phase 7. Until
+then, create it manually:
+
+```bash
+mkdir -p /shared/rulbased-backups
+chown 198:498 /shared/rulbased-backups
+```
 
 ---
 
@@ -117,7 +138,8 @@ irule-versioner/
 │       ├── blockUtil.js         ← iApps LX state transition helpers
 │       ├── configProcessor.js   ← iApps LX block lifecycle
 │       ├── logger.js            ← restnoded logger wrapper
-│       ├── notifier.js          ← syslog + webhook notifications (Phase 5)
+│       ├── migrations.js        ← schema migration framework (Phase 6)
+│       ├── notifier.js          ← syslog + webhook notifications
 │       ├── pollWorker.js        ← scheduled change detection
 │       ├── rulesWorker.js       ← REST API: /rules/*
 │       ├── settings.js          ← in-memory settings with persistence
@@ -142,18 +164,10 @@ irule-versioner/
 ## Building the RPM
 
 ```bash
-# Install rpmbuild if needed:
-#   macOS:         brew install rpm
-#   RHEL/CentOS:   sudo yum install rpm-build
-#   Ubuntu/Debian: sudo apt install rpm
-
 chmod +x build/build-rpm.sh
-./build/build-rpm.sh 1.0.0 0001
-# Output: build/dist/irule-versioner-1.0.0-0001.noarch.rpm
+./build/build-rpm.sh 1.2.0 0001
+# Output: build/dist/irule-versioner-1.2.0-0001.noarch.rpm
 ```
-
-Increment the release number (`0002`, `0003`) for patch updates; increment the
-version for feature releases.
 
 ---
 
@@ -162,18 +176,13 @@ version for feature releases.
 ```bash
 export BIGIP_PASS=<password>
 chmod +x build/install-rpm.sh
-./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.0.0-0001.noarch.rpm
+./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.2.0-0001.noarch.rpm
 ```
 
-**What happens during install:**
-
-1. RPM is uploaded to `/var/config/rest/downloads/` on the BIG-IP.
-2. iControl REST package-management-tasks installs the RPM under `/var/config/rest/iapps/irule-versioner/`.
-3. restnoded restarts and picks up the new workers.
-4. `onStart` creates the data directory, baselines all iRules, starts the poll worker.
-
-**The version store data directory is NOT managed by the RPM** — upgrading or
-uninstalling the package never deletes your version history.
+**After install, create the backup directory:**
+```bash
+ssh root@<bigip> "mkdir -p /shared/rulbased-backups && chown 198:498 /shared/rulbased-backups"
+```
 
 **Accessing the GUI:**
 ```
@@ -187,14 +196,6 @@ https://<bigip>/mgmt/shared/irule-versioner/ui
 ```bash
 # All 4 workers should appear
 ssh root@<BIGIP> "grep 'has started' /var/log/restnoded/restnoded.log | grep irule-versioner"
-# Expected lines:
-#   ConfigProcessor   /shared/iapp/processors/irule-versioner
-#   RulesWorker       /shared/irule-versioner/rules
-#   SettingsWorker    /shared/irule-versioner/settings
-#   UiWorker          /shared/irule-versioner/ui
-
-# Baseline completion
-ssh root@<BIGIP> "grep 'baseline complete' /var/log/restnoded/restnoded.log"
 
 # Rules list
 curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules \
@@ -209,34 +210,26 @@ curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules 
 
 ```bash
 export BIGIP_PASS=<password>
-./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.1.0-0001.noarch.rpm
+./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.2.0-0001.noarch.rpm
 ```
-
-The data directory is preserved across Rülbased upgrades. A re-baseline is not
-performed — existing history is intact.
 
 ### Before a TMOS version upgrade
 
-**The `/var/config/rest/iapps/` directory is wiped during a TMOS upgrade**,
-including the `data/` subdirectory containing all version history. Back up
-your data to the `/shared/` partition (which survives upgrades) before
-upgrading TMOS:
+Use the GUI Backup button (toolbar → Backup) to download a `.tar.gz` of your
+full version history before upgrading TMOS. After upgrading and reinstalling
+the RPM, use the Restore button in the same modal to import your history back.
+
+Alternatively, from the command line:
 
 ```bash
-# Run on BIG-IP before upgrading TMOS
+# Pre-upgrade backup
 tar -czf /shared/rulbased-data-backup-$(date +%Y%m%d).tar.gz \
   /var/config/rest/iapps/irule-versioner/data/
-```
 
-After upgrading TMOS and reinstalling the Rülbased RPM, restore the data:
-
-```bash
-# Run on BIG-IP after TMOS upgrade + RPM reinstall
+# Post-upgrade restore (after TMOS upgrade + RPM reinstall)
 tar -xzf /shared/rulbased-data-backup-<date>.tar.gz -C /
 bigstart restart restnoded
 ```
-
-A one-click export/import workflow for this process is planned for Phase 7.
 
 ---
 
@@ -253,62 +246,31 @@ curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-
 curl -sk -u admin:$BIGIP_PASS \
   -H "Content-Type: application/json" \
   -X POST https://<BIGIP>/mgmt/shared/iapp/package-management-tasks \
-  -d '{"operation":"UNINSTALL","packageName":"irule-versioner-1.0.0-0001.noarch"}'
+  -d '{"operation":"UNINSTALL","packageName":"irule-versioner-1.2.0-0001.noarch"}'
 ```
 
-The data directory at `/var/config/rest/iapps/irule-versioner/data/` is NOT
-deleted. Remove it manually only if you want to wipe all history:
-
-```bash
-ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/irule-versioner/data"
-```
+The data directory is NOT deleted on uninstall.
 
 ---
 
 ## Re-baselining
 
 ```bash
-# Wipe history and force full re-baseline on next start
 ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/irule-versioner/data/*"
 ssh root@<BIGIP> "bigstart restart restnoded"
-ssh root@<BIGIP> "tail -f /var/log/restnoded/restnoded.log | grep irule-versioner"
-```
-
-To add a single missing rule without wiping history:
-
-```bash
-curl -sk -u admin:$BIGIP_PASS \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"message":"Manual baseline","author":"admin"}' \
-  https://<BIGIP>/mgmt/shared/irule-versioner/rules/Common/my_rule/snapshot
 ```
 
 ---
 
 ## Development workflow
 
-For fast iteration, use the phase patch scripts rather than rebuilding the RPM.
-Each patch script is self-contained, writes files atomically, fixes ownership,
-and restarts restnoded with a health check:
-
 ```bash
 scp patch-phaseN.sh root@<bigip>:/tmp/
 ssh root@<bigip> bash /tmp/patch-phaseN.sh
 ```
 
-See PLANNING.md → "Iterative development — patch script approach" for the
-canonical `write_file` pattern and rules for generating future patch scripts.
-The ownership and temp-file rules documented there are mandatory — deviating
-from them will cause restnoded to fail to load workers.
-
-For direct file copy without a restart (e.g. `app.html` only):
-
-```bash
-scp presentation/app.html root@<bigip>:/var/config/rest/iapps/irule-versioner/presentation/
-ssh root@<bigip> "chown --reference=/var/config/rest/iapps/irule-versioner/nodejs/lib/versionStore.js \
-  /var/config/rest/iapps/irule-versioner/presentation/app.html"
-# Hard-reload the browser — no restnoded restart needed for app.html changes
-```
+See PLANNING.md → "Iterative development" for the canonical `write_file`
+pattern and mandatory ownership rules.
 
 ---
 
@@ -318,109 +280,31 @@ All endpoints are under `/mgmt/shared/irule-versioner/`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/rules` | List all iRules with status, hash, version count, drift flag |
+| GET | `/rules` | List all iRules with status, hash, version count, drift flag, acknowledged |
 | GET | `/rules/:p/:n/versions` | Version history for one rule |
 | GET | `/rules/:p/:n/versions/:hash` | TCL content of a specific version |
-| POST | `/rules/:p/:n/snapshot` | Manual snapshot `{ message, author }` |
-| POST | `/rules/:p/:n/deploy` | Deploy a version `{ hash, reason, author }` → 202 `{ taskId }` |
+| POST | `/rules/:p/:n/snapshot` | Snapshot + deploy `{ content, message, author }` or `{ message, author }` |
+| POST | `/rules/:p/:n/deploy` | Deploy a stored version `{ hash, reason, author }` → 202 `{ taskId }` |
 | GET | `/rules/:p/:n/deploy/status/:taskId` | Poll async deploy task status |
 | GET | `/rules/:p/:n/diff?from=:hash&to=:hash` | Side-by-side line diff |
 | PUT | `/rules/:p/:n/retention` | Update retention policy `{ policy, max }` |
+| PUT | `/rules/:p/:n/acknowledge` | Mark rule as acknowledged (clears NEW badge) |
+| DELETE | `/rules/:p/:n` | Remove rule from version store (does not affect live iRule) |
 | GET | `/rules/audit` | Paginated audit log `?rule=&limit=&offset=` |
+| POST | `/rules/export` | Export full version store as base64 tar.gz |
+| POST | `/rules/import` | Import tar.gz archive `{ data: base64, conflictMode: 'merge'|'replace' }` |
+| POST | `/rules/import/check` | Analyse archive without importing `{ data: base64 }` |
 | GET | `/settings` | Read global settings |
 | PUT | `/settings` | Update global settings |
-| GET | `/settings/test-syslog` | Fire a test syslog entry to `/var/log/ltm` |
-| GET | `/settings/test-webhook` | Fire a test POST to the configured webhook URL |
+| GET | `/settings/test-syslog` | Fire test syslog entries |
+| GET | `/settings/test-webhook` | Fire test webhook POST |
 | GET | `/ui` | Serve full-page GUI |
 
 ---
 
 ## Syslog and webhook notifications
 
-### Syslog
-
-When `syslogEnabled` is `true` (default), Rülbased writes entries on every
-deploy, rollback, and external-change event to **two destinations**:
-
-**`/var/log/ltm`** — operational log, `local0.notice`, tag `rulbased`:
-```
-Apr 16 07:47:10 bigip01 notice rulbased[1415]: rulbased: [deploy] rule=/Common/my_rule to=e82f233 author=admin reason=CR-4421 adding HSTS header
-```
-
-**`/var/log/audit`** — security/compliance log, `local0.info`, `AUDIT` token,
-matches native BIG-IP audit entry format for SIEM/auditor compatibility:
-```
-Apr 16 07:47:10 bigip01 info rulbased[1416]: AUDIT - user admin - RAW: rulbased: action=deploy rule=/Common/my_rule to=e82f233 reason=CR-4421 adding HSTS header
-```
-
-Test events (`GET /settings/test-syslog`) write to `/var/log/ltm` only — they
-are not real configuration changes and do not belong in the audit log.
-
-**Grep for entries:**
-```bash
-grep rulbased /var/log/ltm | tail -20
-grep rulbased /var/log/audit | tail -20
-```
-
-**Test both destinations without triggering a deploy:**
-```bash
-curl -sk -u admin: \
-  http://localhost:8100/mgmt/shared/irule-versioner/settings/test-syslog -w "\n"
-# {"ok":true,"message":"Entries written — check: grep rulbased /var/log/ltm && grep rulbased /var/log/audit"}
-```
-
-### Webhook
-
-When `webhookUrl` is set, Rülbased sends an HTTP/HTTPS POST to that URL on
-every deploy and rollback event. Webhook on drift events is controlled
-separately by `webhookOnDrift` (default `false`).
-
-**Payload shape:**
-```json
-{
-  "event": "deploy",
-  "rule": "/Common/my_rule",
-  "fromHash": "b2e1a09",
-  "toHash": "e82f233",
-  "author": "admin",
-  "reason": "CR-4421 adding HSTS header",
-  "timestamp": "2026-04-16T07:47:10.000Z",
-  "device": "bigip01.example.com"
-}
-```
-
-**`event` values:** `deploy` | `rollback` | `external-change-detected` | `test`
-
-**HMAC signing:** If `webhookSecret` is set, the request includes an
-`X-Hub-Signature-256` header — `sha256=<hmac>` computed over the raw JSON body,
-matching the GitHub webhook signature format. Verify in your receiver:
-
-```python
-import hmac, hashlib
-sig = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-assert hmac.compare_digest(sig, request.headers['X-Hub-Signature-256'])
-```
-
-**Retry behaviour:** Failed deliveries are retried up to 3 times with 5 s
-backoff. If all attempts fail, a `webhook-failed` entry is written to the audit
-log with the error message.
-
-**Test webhook from CLI:**
-```bash
-curl -sk -u admin: \
-  http://localhost:8100/mgmt/shared/irule-versioner/settings/test-webhook -w "\n"
-# {"ok":true}  or  {"ok":false,"error":"No webhook URL configured"}
-```
-
-**Example: Slack incoming webhook**
-
-Configure a Slack app with an incoming webhook URL, then in Rülbased Settings:
-- Webhook URL: `https://hooks.slack.com/services/T.../B.../...`
-- Webhook on drift events: on or off per preference
-
-Rülbased sends raw JSON — to format it for Slack, put a small translation
-function in front (AWS Lambda, a local nginx + Lua stub, etc.) or use a
-Slack workflow that accepts raw JSON payloads.
+See Phase 5 section above — behaviour unchanged.
 
 ---
 
@@ -430,12 +314,15 @@ Slack workflow that accepts raw JSON payloads.
 /var/config/rest/iapps/irule-versioner/data/
   Common/
     my_rule/
-      manifest.json     ← version history + retention policy
+      manifest.json     ← version history + retention policy + acknowledged flag
       a3f9c12.tcl       ← TCL blob keyed by short SHA-1
       b2e1a09.tcl
   audit.jsonl           ← append-only audit log (JSON Lines)
   settings.json         ← persisted global settings
 ```
+
+The `manifest.json` now includes an `acknowledged` field (boolean). Manifests
+created before Phase 6 without this field are treated as `acknowledged: true`.
 
 ---
 
@@ -443,16 +330,17 @@ Slack workflow that accepts raw JSON payloads.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `dataDirectory` | string | `…/data` | Version store root — do not change after first install |
-| `pollIntervalSeconds` | integer | `300` | External-change poll interval; `0` disables polling |
-| `dashboardAuditLimit` | integer | `15` | Number of entries shown in the dashboard activity feed |
-| `syslogEnabled` | boolean | `true` | Write to `/var/log/ltm` on deploy/rollback/drift via `local0.notice` |
-| `webhookUrl` | string | `""` | HTTP/HTTPS POST target for event notifications; empty = disabled |
-| `webhookSecret` | string | `""` | HMAC-SHA256 signing secret; when set, adds `X-Hub-Signature-256` header |
-| `webhookOnDrift` | boolean | `false` | Also fire webhook on external-change events (default off to avoid noise) |
-| `iruleLinks` | boolean | `true` | Click iRules events and namespace commands to open CloudDocs reference pages |
-| `tclManPageLinks` | boolean | `true` | Click standard TCL commands to open tcl-lang.org 8.4 man pages |
-| `debugMode` | boolean | `false` | Enable `[iRV]` browser console logging and verbose notifier logging |
+| `dataDirectory` | string | `…/data` | Version store root |
+| `pollIntervalSeconds` | integer | `300` | Poll interval; `0` disables |
+| `dashboardAuditLimit` | integer | `15` | Dashboard activity feed entries |
+| `syslogEnabled` | boolean | `true` | Syslog on deploy/rollback/drift |
+| `webhookUrl` | string | `""` | Webhook POST target |
+| `webhookSecret` | string | `""` | HMAC-SHA256 signing secret |
+| `webhookOnDrift` | boolean | `false` | Webhook on drift events |
+| `iruleLinks` | boolean | `true` | Click-to-docs for iRules events |
+| `tclManPageLinks` | boolean | `true` | Click-to-docs for TCL commands |
+| `debugMode` | boolean | `false` | Browser console logging |
+| `schemaVersion` | integer | `0` | Internal — managed by migrations.js |
 
 ---
 
@@ -467,26 +355,24 @@ node test/unit.js
 
 ## Key design decisions
 
-**iControl REST for all reads and writes** — iRule content is read and written
-via localhost:8100. Reads use `GET` with `?$select=apiAnonymous` for clean TCL
-with no tmsh metadata. Writes use `PATCH { "apiAnonymous": content }`.
+**iControl REST for all reads and writes** — Reads use `GET ?$select=apiAnonymous`.
+Writes use `PATCH { "apiAnonymous": content }`. For new rules (404 on PATCH),
+falls back to `POST /mgmt/tm/ltm/rule`.
 
-**localhost:8100 authentication** — `Authorization: Basic admin:` (empty
-password) is accepted by restjavad without password validation on the localhost
-channel. No credentials are stored anywhere in the extension.
+**Deploy errors use HTTP 200 with `{ ok: false, error }`** — restnoded intercepts
+and transforms non-2xx responses before they reach the browser, making the body
+unreliable. All errors that need to surface a message in the GUI return 200 with
+`ok: false`.
 
-**Content-addressed blob store** — Blobs are stored as `<7-char-sha1>.tcl`.
-Identical content auto-deduplicates — saving unchanged content produces no new
-blob or manifest entry.
+**localhost:8100 authentication** — `Authorization: Basic admin:` (empty password).
 
-**No npm dependencies** — Only Node.js built-ins (`fs`, `path`, `crypto`,
-`child_process`, `http`). Compatible with Node.js 6.9.1 on TMOS 21.x.
+**Content-addressed blob store** — `<7-char-sha1>.tcl`. Identical content
+auto-deduplicates.
 
-**CodeMirror inlined** — The full CodeMirror bundle is inlined into `app.html`
-as `<script>` and `<style>` blocks. restnoded's RestOperation pipeline
-overwrites Content-Type for string bodies, making separate vendor file serving
-unreliable.
+**No npm dependencies** — Node.js built-ins only. Node 6.9.1 compatible.
 
-**iRules overlay is stateless** — CodeMirror 5's `addOverlay` rejects
-`startState`/`copyState` at runtime. The overlay uses `stream.string` and
-`stream.start` lookbehind to determine namespace context without state.
+**CodeMirror inlined** — Full bundle inlined into `app.html`.
+
+**TCL syntax validation** — iControl REST validates TCL when `apiAnonymous` is
+submitted. Errors returned as 4xx with the TCL error message. No pre-validation
+endpoint exists; "incomplete command" indicates an unclosed `{` block.
