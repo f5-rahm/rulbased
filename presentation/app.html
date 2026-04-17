@@ -968,7 +968,7 @@ span.CodeMirror-selectedtext { background: none; }
               <li><strong>Built-in audit log</strong> — append-only record of every deploy, rollback, snapshot, drift detection, import, and deletion</li>
             </ul>
             <div class="db-intro-meta">
-              <span class="db-version-pill">v1.2.0</span>
+              <span class="db-version-pill">v2.0.0</span>
             </div>
           </div>
 
@@ -1005,6 +1005,14 @@ span.CodeMirror-selectedtext { background: none; }
           <div class="db-card db-changelog">
             <div class="db-card-title">Changelog</div>
             <div class="db-cl-list">
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v2.0.0</div>
+                <ul class="db-cl-items">
+                  <li>Package renamed to Rülbased — new RPM name, worker URIs under /mgmt/shared/rulbased/, data directory at /var/config/rest/iapps/rulbased/data</li>
+                  <li>GUI accessible at /mgmt/shared/rulbased/ui (the old /iapps/irule-versioner/ paths no longer resolve)</li>
+                  <li>Flag-day rebrand — not an in-place upgrade from 1.x; old installation should be removed separately</li>
+                </ul>
+              </div>
               <div class="db-cl-entry">
                 <div class="db-cl-ver">v1.2.0</div>
                 <ul class="db-cl-items">
@@ -1309,7 +1317,9 @@ span.CodeMirror-selectedtext { background: none; }
         <div style="font-weight:600;margin-bottom:6px">Download backup</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
           Creates a <code>.tar.gz</code> of all version history and downloads it to
-          your browser. A copy is also saved on the device at /shared/rulbased-backups.
+          your browser. If <code>/shared/rulbased-backups</code> exists on the device
+          (created by the install's <code>post-install.sh</code>), a copy is also
+          retained there.
         </div>
         <button id="btn-do-export" style="padding:6px 14px">&#10571; Download Backup</button>
       </div>
@@ -1388,14 +1398,14 @@ span.CodeMirror-selectedtext { background: none; }
 
 <script>
 /* ==========================================================================
-   iRule Versioner — app.html  (Phase 3)
+   Rülbased — app.html  (Phase 3+)
    Full-page master-detail SPA.
    Vanilla JS only. ES5-safe (var, function(){}, string concat, no Promise).
    ========================================================================== */
 
 'use strict';
 
-var API     = '/mgmt/shared/irule-versioner';
+var API     = '/mgmt/shared/rulbased';
 var POLL_MS = 1500;   // task-status poll cadence
 var POLL_MAX = 200;   // ~5 minutes at 1.5s
 
@@ -2999,8 +3009,20 @@ function exportBackup() {
       a.href = url; a.download = data.filename || 'rulbased-backup.tar.gz';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      status.textContent = 'Downloaded ' + data.filename + ' (' + Math.round(data.size / 1024) + ' KB). On-device: ' + data.path;
-      toast('success', 'Backup downloaded', data.filename);
+      // Report on-device copy status.  Newer backend sets devicePathSaved/
+      // devicePathError explicitly; older backends just set `path`.
+      var onDeviceMsg;
+      if (data.devicePathError) {
+        onDeviceMsg = 'On-device copy skipped: ' + data.devicePathError;
+        toast('warning', 'Backup downloaded (on-device copy skipped)', data.filename);
+      } else if (data.devicePathSaved === false) {
+        onDeviceMsg = 'On-device copy pending (asynchronous — check ' + (data.devicePath || data.path) + ')';
+        toast('success', 'Backup downloaded', data.filename);
+      } else {
+        onDeviceMsg = 'On-device copy: ' + (data.devicePath || data.path);
+        toast('success', 'Backup downloaded', data.filename);
+      }
+      status.textContent = 'Downloaded ' + data.filename + ' (' + Math.round(data.size / 1024) + ' KB). ' + onDeviceMsg;
     } catch (dlErr) {
       status.textContent = 'Archive created but download failed: ' + dlErr.message;
     }

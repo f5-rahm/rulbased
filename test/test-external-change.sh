@@ -27,7 +27,7 @@ set -euo pipefail
 BIGIP="localhost"
 RULE="${1:-will_it_compile}"
 PARTITION="Common"
-API="http://$BIGIP:8100/mgmt/shared/irule-versioner"
+API="http://$BIGIP:8100/mgmt/shared/rulbased"
 ICREST="https://$BIGIP/mgmt/tm/ltm/rule"
 AUTH="admin:"
 POLL_OVERRIDE="${2:-}"
@@ -157,7 +157,7 @@ ok "Baseline recorded"
 
 hdr "Step 2: Inject external change (simulating TMUI/VS Code edit)"
 
-TEST_CONTENT="when RULE_INIT {\n    # external-change-detection-test\n    log local0. \"iRule Versioner: external change test $(date +%s)\"\n}"
+TEST_CONTENT="when RULE_INIT {\n    # external-change-detection-test\n    log local0. \"Rulbased: external change test $(date +%s)\"\n}"
 
 PATCH_RESULT=$(icr_patch "~${PARTITION}~${RULE}" \
   "{\"apiAnonymous\":\"$TEST_CONTENT\"}")
@@ -298,6 +298,6 @@ echo "  ✓ TMUI GUI editor    — mcpd change → REST API → poll detects"
 echo "  ✓ VS Code extension  — config merge → mcpd → REST API → poll detects"
 echo ""
 echo "  Maximum undetected drift window: ${POLL_INTERVAL}s"
-echo "  Adjust via: PUT /mgmt/shared/irule-versioner/settings"
+echo "  Adjust via: PUT /mgmt/shared/rulbased/settings"
 echo "              { \"pollIntervalSeconds\": 30 }"
 echo ""

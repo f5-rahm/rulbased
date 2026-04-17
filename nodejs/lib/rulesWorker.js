@@ -9,7 +9,7 @@ var migrations = require('./migrations');
 var fs = require('fs');
 var path = require('path');
 
-var WORKER_URI_PATH = 'shared/irule-versioner/rules';
+var WORKER_URI_PATH = 'shared/rulbased/rules';
 
 // ---------------------------------------------------------------------------
 // Async deploy task tracking — in-memory Map (keyed by taskId)
@@ -23,7 +23,7 @@ var _deployLock = {};
 /**
  * Rules Worker
  *
- * Registered base URI: /mgmt/shared/irule-versioner/rules
+ * Registered base URI: /mgmt/shared/rulbased/rules
  *
  * Routes:
  *   GET  /rules                                  - list all tracked iRules
@@ -52,31 +52,31 @@ function RulesWorker() {
  */
 RulesWorker.prototype.onStart = function (success) {
   var self = this;
-  var dataDir = '/var/config/rest/iapps/irule-versioner/data';
+  var dataDir = '/var/config/rest/iapps/rulbased/data';
 
-  self.logger.info('[irule-versioner] RulesWorker.onStart: start');
+  self.logger.info('[Rülbased] RulesWorker.onStart: start');
 
   try {
     settings.load(dataDir);
   } catch (se) {
-    self.logger.warning('[irule-versioner] RulesWorker.onStart: settings.load error: ' + se.message);
+    self.logger.warning('[Rülbased] RulesWorker.onStart: settings.load error: ' + se.message);
   }
 
   try {
     versionStore.init(dataDir, function (initErr) {
       if (initErr) {
-        self.logger.severe('[irule-versioner] RulesWorker.onStart: versionStore.init failed: ' + initErr.message);
+        self.logger.severe('[Rülbased] RulesWorker.onStart: versionStore.init failed: ' + initErr.message);
         return success();
       }
 
-      self.logger.info('[irule-versioner] RulesWorker.onStart: store initialised, running migrations');
+      self.logger.info('[Rülbased] RulesWorker.onStart: store initialised, running migrations');
 
       // Run schema migrations before anything else.
       // Migrations are idempotent; on a fresh install v0→v1 is a no-op
       // (no blobs to prune).  On existing installs it cleans up orphaned blobs.
       migrations.run(dataDir, settings, function (migErr) {
         if (migErr) {
-          self.logger.warning('[irule-versioner] RulesWorker.onStart: migration error (non-fatal): ' + migErr.message);
+          self.logger.warning('[Rülbased] RulesWorker.onStart: migration error (non-fatal): ' + migErr.message);
         }
 
         // Check for existing partition subdirectories to decide whether to baseline
@@ -98,29 +98,29 @@ RulesWorker.prototype.onStart = function (success) {
             } catch (se2) { /* skip */ }
           }
         } catch (rdErr) {
-          self.logger.warning('[irule-versioner] RulesWorker.onStart: could not read data dir: ' + rdErr.message);
+          self.logger.warning('[Rülbased] RulesWorker.onStart: could not read data dir: ' + rdErr.message);
         }
 
         if (hasManifest) {
-          self.logger.info('[irule-versioner] RulesWorker.onStart: existing data found, skipping baseline');
+          self.logger.info('[Rülbased] RulesWorker.onStart: existing data found, skipping baseline');
           _startPollWorker(self, dataDir);
           return success();
         }
 
-        self.logger.info('[irule-versioner] RulesWorker.onStart: no existing data, running baseline');
+        self.logger.info('[Rülbased] RulesWorker.onStart: no existing data, running baseline');
         bigipClient.listAllRules(function (listErr, liveRules) {
           if (listErr) {
-            self.logger.severe('[irule-versioner] RulesWorker.onStart: listAllRules failed: ' + listErr.message);
+            self.logger.severe('[Rülbased] RulesWorker.onStart: listAllRules failed: ' + listErr.message);
             _startPollWorker(self, dataDir);
             return success();
           }
           var ruleCount = Object.keys(liveRules).length;
-          self.logger.info('[irule-versioner] RulesWorker.onStart: got ' + ruleCount + ' rules, snapshotting');
+          self.logger.info('[Rülbased] RulesWorker.onStart: got ' + ruleCount + ' rules, snapshotting');
           versionStore.baselineSnapshot(liveRules, dataDir, function (snapErr, count) {
             if (snapErr) {
-              self.logger.severe('[irule-versioner] RulesWorker.onStart: baseline failed: ' + snapErr.message);
+              self.logger.severe('[Rülbased] RulesWorker.onStart: baseline failed: ' + snapErr.message);
             } else {
-              self.logger.info('[irule-versioner] RulesWorker.onStart: baseline complete, ' + count + ' rules snapshotted');
+              self.logger.info('[Rülbased] RulesWorker.onStart: baseline complete, ' + count + ' rules snapshotted');
             }
             _startPollWorker(self, dataDir);
             return success();
@@ -129,7 +129,7 @@ RulesWorker.prototype.onStart = function (success) {
       });
     });
   } catch (e) {
-    self.logger.severe('[irule-versioner] RulesWorker.onStart: uncaught exception: ' + e.message);
+    self.logger.severe('[Rülbased] RulesWorker.onStart: uncaught exception: ' + e.message);
     success();
   }
 };
@@ -139,13 +139,13 @@ function _startPollWorker(workerInstance, dataDir) {
   try {
     var pollIntervalSeconds = settings.getAll().pollIntervalSeconds;
     if (!pollIntervalSeconds || pollIntervalSeconds <= 0) {
-      workerInstance.logger.info('[irule-versioner] RulesWorker.onStart: poll worker disabled (interval=0)');
+      workerInstance.logger.info('[Rülbased] RulesWorker.onStart: poll worker disabled (interval=0)');
       return;
     }
     pollWorker.start(dataDir, pollIntervalSeconds);
-    workerInstance.logger.info('[irule-versioner] RulesWorker.onStart: poll worker started, interval=' + pollIntervalSeconds + 's');
+    workerInstance.logger.info('[Rülbased] RulesWorker.onStart: poll worker started, interval=' + pollIntervalSeconds + 's');
   } catch (e) {
-    workerInstance.logger.warning('[irule-versioner] RulesWorker.onStart: could not start poll worker: ' + e.message);
+    workerInstance.logger.warning('[Rülbased] RulesWorker.onStart: could not start poll worker: ' + e.message);
   }
 }
 
@@ -281,8 +281,8 @@ function _getSegments(restOperation) {
   var pathname = uri ? (uri.pathname || '') : '';
 
   var prefixes = [
-    '/mgmt/shared/irule-versioner/rules',
-    '/shared/irule-versioner/rules'
+    '/mgmt/shared/rulbased/rules',
+    '/shared/rulbased/rules'
   ];
 
   var relative = pathname;
@@ -498,7 +498,6 @@ function _updateRetention(dataDir, partition, name, body, restOperation) {
 // ---------------------------------------------------------------------------
 
 function _exportData(dataDir, restOperation) {
-  var childProcess = require('child_process');
   var backupDir = '/shared/rulbased-backups';
   var ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '-').slice(0, 19);
   var filename = 'rulbased-data-' + ts + '.tar.gz';
@@ -508,6 +507,21 @@ function _exportData(dataDir, restOperation) {
   var tmpPath = '/var/tmp/' + filename;
 
   logger.info('RulesWorker._exportData: creating archive at ' + tmpPath);
+
+  // Pre-check backup dir existence and writability.  restnoded runs as uid
+  // 198 and cannot create top-level dirs under /shared (root:root 0755),
+  // so if the dir is missing we flag the response and skip the on-device
+  // copy entirely rather than logging noisy EACCES errors every time.
+  // The dir is normally created by the RPM %post scriptlet — if it's
+  // missing, the operator needs to run build/post-install.sh.
+  var backupDirAvailable = false;
+  try {
+    var s = fs.statSync(backupDir);
+    if (s && s.isDirectory()) { backupDirAvailable = true; }
+  } catch (e) {
+    logger.warn('RulesWorker._exportData: backup dir missing — on-device copy disabled. ' +
+      'Run build/post-install.sh to create ' + backupDir + '. (stat: ' + e.message + ')');
+  }
 
   versionStore.exportArchive(dataDir, tmpPath, function (tarErr) {
     if (tarErr) {
@@ -523,47 +537,60 @@ function _exportData(dataDir, restOperation) {
       var b64 = buf.toString('base64');
       logger.info('RulesWorker._exportData: archive ' + buf.length + ' bytes');
 
-      // Respond immediately — don't block the download on the device copy
-      restOperation.setStatusCode(200);
-      restOperation.setBody({
+      // Build response.  `devicePath` is the path the copy WILL land at if
+      // the on-device backup dir exists; `devicePathSaved` tells the GUI
+      // whether the on-device copy actually succeeded.  The browser download
+      // always works regardless — the on-device copy is best-effort.
+      var backupPath = path.join(backupDir, filename);
+      var response = {
         filename: filename,
         data: b64,
         size: buf.length,
-        path: path.join(backupDir, filename)
-      });
+        path: backupDir + '/' + filename,
+        devicePath: backupPath,
+        devicePathSaved: false,
+        devicePathError: null
+      };
+
+      if (!backupDirAvailable) {
+        response.devicePathError = 'Backup directory ' + backupDir +
+          ' does not exist. Run build/post-install.sh on the BIG-IP as root to create it.';
+        // Respond immediately and clean up the tmp file
+        restOperation.setStatusCode(200);
+        restOperation.setBody(response);
+        restOperation.complete();
+        fs.unlink(tmpPath, function () {});
+        return;
+      }
+
+      // Respond immediately — don't block the download on the device copy
+      restOperation.setStatusCode(200);
+      restOperation.setBody(response);
       restOperation.complete();
 
       // Best-effort copy to backupDir; fire-and-forget after response is sent.
-      // Strategy: mkdir -p the backupDir, then rename tmpPath into it (atomic on
-      // same filesystem).  If rename fails (cross-device), fall back to copy+unlink.
-      var backupPath = path.join(backupDir, filename);
-      childProcess.execFile('/bin/mkdir', ['-p', backupDir], { timeout: 10000 }, function (mkErr) {
-        if (mkErr) {
-          logger.warn('RulesWorker._exportData: mkdir failed for ' + backupDir + ': ' + mkErr.message);
-          fs.unlink(tmpPath, function () {});
+      // Strategy: rename tmpPath into place (atomic on same filesystem).
+      // If rename fails (cross-device or EACCES), fall back to copy+unlink.
+      fs.rename(tmpPath, backupPath, function (renameErr) {
+        if (!renameErr) {
+          logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
           return;
         }
-        fs.rename(tmpPath, backupPath, function (renameErr) {
-          if (!renameErr) {
-            logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
+        // rename failed - try copy then unlink
+        logger.debug('RulesWorker._exportData: rename failed (' + renameErr.message + '), trying copy');
+        fs.readFile(tmpPath, function (readErr2, buf2) {
+          if (readErr2) {
+            logger.warn('RulesWorker._exportData: could not read tmpPath for copy: ' + readErr2.message);
+            fs.unlink(tmpPath, function () {});
             return;
           }
-          // rename failed (likely cross-device) - fall back to copy then unlink
-          logger.debug('RulesWorker._exportData: rename failed (' + renameErr.message + '), trying copy');
-          fs.readFile(tmpPath, function (readErr, buf2) {
-            if (readErr) {
-              logger.warn('RulesWorker._exportData: could not read tmpPath for copy: ' + readErr.message);
-              fs.unlink(tmpPath, function () {});
-              return;
+          fs.writeFile(backupPath, buf2, function (cpErr) {
+            if (cpErr) {
+              logger.warn('RulesWorker._exportData: could not save to ' + backupPath + ': ' + cpErr.message);
+            } else {
+              logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
             }
-            fs.writeFile(backupPath, buf2, function (cpErr) {
-              if (cpErr) {
-                logger.warn('RulesWorker._exportData: could not save to ' + backupPath + ': ' + cpErr.message);
-              } else {
-                logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
-              }
-              fs.unlink(tmpPath, function () {});
-            });
+            fs.unlink(tmpPath, function () {});
           });
         });
       });

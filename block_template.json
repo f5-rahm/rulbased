@@ -1,6 +1,6 @@
 {
-  "name": "irule_versioner",
-  "description": "iRule Versioning Engine - snapshot, diff, deploy and rollback iRules on BIG-IP",
+  "name": "rulbased",
+  "description": "Rülbased — Version control for BIG-IP iRules: snapshot, diff, deploy and rollback",
   "inputProperties": [
     {
       "id": "pollIntervalSeconds",
@@ -15,7 +15,7 @@
       "type": "STRING",
       "displayName": "Data directory path",
       "description": "Filesystem path where version store data is written.",
-      "defaultValue": "/var/config/rest/iapps/irule-versioner/data",
+      "defaultValue": "/var/config/rest/iapps/rulbased/data",
       "isRequired": false
     },
     {
@@ -58,9 +58,9 @@
     }
   ],
   "configProcessorReference": {
-    "link": "https://localhost/mgmt/shared/iapp/processors/irule-versioner"
+    "link": "https://localhost/mgmt/shared/iapp/processors/rulbased"
   },
   "presentationHtmlReference": {
-    "link": "https://localhost/iapps/irule-versioner/presentation/index.html"
+    "link": "https://localhost/iapps/rulbased/presentation/index.html"
   }
 }

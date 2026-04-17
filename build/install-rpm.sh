@@ -2,26 +2,29 @@
 # =============================================================================
 # install-rpm.sh
 #
-# Uploads and installs the irule-versioner RPM on a target BIG-IP.
+# Uploads and installs the Rülbased RPM on a target BIG-IP.
 # This is the ONLY script that requires BIG-IP credentials.
 #
 # NOTE: Use the BIG-IP 'admin' account (or another admin-role account).
 #       The 'root' OS account is blocked from iControl REST by design.
 #
-# The password is read from the BIGIP_PASS environment variable — never
-# passed as a command-line argument — so it does not appear in shell
-# history, ps output, or CI logs.
-#
 # Usage:
-#   export BIGIP_PASS=<password>
-#   ./build/install-rpm.sh <host> <user> <rpm-file>
+#   bash ./build/install-rpm.sh <host> <user> <rpm-file>
 #
-# Example:
-#   export BIGIP_PASS=MySecret
-#   ./build/install-rpm.sh 192.168.1.245 admin build/dist/irule-versioner-1.0.0-0001.noarch.rpm
+# If BIGIP_PASS is not set in the environment, you will be prompted for
+# the password interactively (input is hidden).  Setting BIGIP_PASS in the
+# environment is also supported, and preferred for CI/CD where interactive
+# input is not possible:
+#
+#   export BIGIP_PASS=<password>
+#   bash ./build/install-rpm.sh <host> <user> <rpm-file>
 #
 # In a CI/CD pipeline, set BIGIP_PASS from your secrets vault:
-#   BIGIP_PASS=${{ secrets.BIGIP_ADMIN_PASS }} ./build/install-rpm.sh ...
+#   BIGIP_PASS=${{ secrets.BIGIP_ADMIN_PASS }} bash ./build/install-rpm.sh ...
+#
+# Example (interactive):
+#   bash ./build/install-rpm.sh 192.168.1.245 admin build/dist/rulbased-2.0.0-0001.noarch.rpm
+#   Password for admin@192.168.1.245: ******
 #
 # Prerequisites:
 #   - curl available on the build machine
@@ -32,17 +35,30 @@
 
 set -euo pipefail
 
-BIGIP_HOST="${1:?Usage: install-rpm.sh <host> <user> <rpm-file>}"
-BIGIP_USER="${2:?Usage: install-rpm.sh <host> <user> <rpm-file>}"
-RPM_FILE="${3:?Usage: install-rpm.sh <host> <user> <rpm-file>}"
+BIGIP_HOST="${1:?Usage: bash install-rpm.sh <host> <user> <rpm-file>}"
+BIGIP_USER="${2:?Usage: bash install-rpm.sh <host> <user> <rpm-file>}"
+RPM_FILE="${3:?Usage: bash install-rpm.sh <host> <user> <rpm-file>}"
 
-# Password must come from the environment — never a positional arg
-: "${BIGIP_PASS:?Set BIGIP_PASS environment variable first:
-  export BIGIP_PASS=<password>
-  ./build/install-rpm.sh <host> <user> <rpm-file>
-
-NOTE: Use the BIG-IP admin account, not root.
-      root is blocked from iControl REST by design.}"
+# Password: environment variable wins; otherwise prompt interactively.
+# Using read -s keeps the input off the terminal and out of shell history.
+if [ -z "${BIGIP_PASS:-}" ]; then
+  if [ ! -t 0 ]; then
+    echo "ERROR: BIGIP_PASS is not set and stdin is not a TTY."
+    echo "  Either set BIGIP_PASS=<password> in the environment,"
+    echo "  or run the script from an interactive terminal."
+    echo ""
+    echo "  NOTE: Use the BIG-IP admin account, not root."
+    echo "        root is blocked from iControl REST by design."
+    exit 1
+  fi
+  printf "Password for %s@%s: " "${BIGIP_USER}" "${BIGIP_HOST}"
+  read -rs BIGIP_PASS
+  echo ""
+  if [ -z "${BIGIP_PASS:-}" ]; then
+    echo "ERROR: password cannot be empty"
+    exit 1
+  fi
+fi
 
 if [ ! -f "$RPM_FILE" ]; then
   echo "ERROR: RPM file not found: $RPM_FILE"
@@ -150,15 +166,28 @@ while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
   echo "    [${ATTEMPTS}/${MAX_ATTEMPTS}] ${STATUS}"
 
   if [ "$STATUS" = "FINISHED" ]; then
+    POST_INSTALL_PATH="/var/config/rest/iapps/rulbased/build/post-install.sh"
     echo ""
-    echo "==> Install complete."
+    echo "==> Step 2 complete: RPM uploaded and installed."
     echo ""
-    echo "Verify installation:"
-    echo "  curl -sk -u ${BIGIP_USER}:'***' ${BIGIP_URL}/toc | grep irule-versioner"
-    echo "  curl -sk -u ${BIGIP_USER}:'***' ${BIGIP_URL}/shared/irule-versioner/rules"
+    echo "==> Step 3: Run post-install script on the BIG-IP (required)"
     echo ""
-    echo "Watch logs on BIG-IP:"
-    echo "  tail -f /var/log/restnoded/restnoded.log | grep irule-versioner"
+    echo "    ssh root@${BIGIP_HOST} bash ${POST_INSTALL_PATH}"
+    echo ""
+    echo "    This creates /shared/rulbased-backups with the correct"
+    echo "    ownership (restnoded:webusers, 0750) so backup exports can"
+    echo "    be retained on-device. Idempotent — safe to re-run."
+    echo ""
+    echo "==> Step 4: Verify the install"
+    echo ""
+    echo "    ssh root@${BIGIP_HOST} \"grep 'has started' /var/log/restnoded/restnoded.log | grep -i rulbased\""
+    echo "    curl -sk -u ${BIGIP_USER}:'***' ${BIGIP_URL}/shared/rulbased/rules | jq ."
+    echo ""
+    echo "==> Step 5: Access the GUI"
+    echo ""
+    echo "    ${BIGIP_URL}/shared/rulbased/ui"
+    echo ""
+    echo "See README.md \"Installing\" for full details."
     exit 0
   fi
 

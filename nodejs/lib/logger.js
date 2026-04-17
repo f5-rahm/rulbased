@@ -7,11 +7,13 @@
  * restnoded injects a global 'logger' object; if it's not present
  * (e.g. during unit testing outside restnoded), fall back to console.
  *
- * All log lines are prefixed with [irule-versioner] so they're easy
- * to grep in /var/log/restnoded/restnoded.log.
+ * All log lines are prefixed with [Rülbased] so they're easy
+ * to grep in /var/log/restnoded/restnoded.log.  UTF-8 in log lines
+ * is safe on Node 6.9.1; restnoded writes the file as UTF-8 without
+ * transformation.
  */
 
-var PREFIX = '[irule-versioner] ';
+var PREFIX = '[Rülbased] ';
 
 function _getLogger() {
   // restnoded provides a global logger; outside that environment use console

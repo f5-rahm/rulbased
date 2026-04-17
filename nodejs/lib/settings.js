@@ -21,7 +21,7 @@ var logger = require('./logger');
  */
 
 var _defaults = {
-  dataDirectory: '/var/config/rest/iapps/irule-versioner/data',
+  dataDirectory: '/var/config/rest/iapps/rulbased/data',
   pollIntervalSeconds: 300,
   syslogEnabled: true,
   webhookUrl: '',

@@ -3,7 +3,7 @@
 # bundle-codemirror.sh
 #
 # Downloads CodeMirror 5 (the last version with a simple single-file
-# distribution) and bundles the minimum needed for the iRule Versioner GUI:
+# distribution) and bundles the minimum needed for the Rülbased GUI:
 #   - core (codemirror.js + codemirror.css)
 #   - TCL mode (mode/tcl/tcl.js)
 #   - matchbrackets addon
@@ -18,7 +18,7 @@
 #   - node (for minification via uglify-js) OR cat if you skip minification
 #
 # Usage:
-#   cd irule-versioner/
+#   cd rulbased/
 #   bash build/bundle-codemirror.sh
 #
 # Offline / air-gapped option:
@@ -39,7 +39,7 @@ trap cleanup EXIT
 cd "$(dirname "$0")/.."
 mkdir -p "$VENDOR_DIR"
 
-echo "==> CodeMirror bundler for iRule Versioner"
+echo "==> CodeMirror bundler for Rülbased"
 echo "    Target: $VENDOR_DIR"
 echo "    Version: CodeMirror $CM_VERSION"
 
@@ -68,7 +68,7 @@ BUNDLE_JS="$TMP_DIR/bundle_raw.js"
 # Header comment
 cat > "$BUNDLE_JS" <<'HEADER'
 /*!
- * CodeMirror 5 bundle for iRule Versioner
+ * CodeMirror 5 bundle for Rülbased
  * Includes: core + TCL mode + matchbrackets + show-hint
  * License: MIT — https://codemirror.net/LICENSE
  */

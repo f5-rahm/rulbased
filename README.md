@@ -12,11 +12,10 @@ infrastructure.
 - [Features](#features)
 - [Requirements](#requirements)
 - [Directory structure](#directory-structure)
-- [Building the RPM](#building-the-rpm)
 - [Installing](#installing)
-- [Verifying the install](#verifying-the-install)
 - [Upgrading](#upgrading)
 - [Uninstalling](#uninstalling)
+- [Troubleshooting](#troubleshooting)
 - [Re-baselining](#re-baselining)
 - [Development workflow](#development-workflow)
 - [REST API reference](#rest-api-reference)
@@ -40,7 +39,7 @@ infrastructure.
 - Append-only audit log (JSON Lines)
 
 ### Phase 2 — Full-page GUI
-- Full-page master-detail SPA at `https://<bigip>/mgmt/shared/irule-versioner/ui`
+- Full-page master-detail SPA at `https://<bigip>/mgmt/shared/rulbased/ui`
 - Searchable iRule list with flat / by-partition grouping toggle
 - Overview tab: live TCL viewer with CodeMirror syntax highlighting
 - Inline editor: click Edit to modify a rule
@@ -126,7 +125,7 @@ chown 198:498 /shared/rulbased-backups
 ## Directory structure
 
 ```
-irule-versioner/
+rulbased/
 ├── PLANNING.md                  ← project spec, design decisions, phase roadmap
 ├── README.md                    ← this file
 ├── manifest.json                ← iApps LX package tag
@@ -161,46 +160,85 @@ irule-versioner/
 
 ---
 
-## Building the RPM
+## Installing
+
+### 1. Build the RPM on your local machine
 
 ```bash
-chmod +x build/build-rpm.sh
-./build/build-rpm.sh 1.2.0 0001
-# Output: build/dist/irule-versioner-1.2.0-0001.noarch.rpm
+bash ./build/build-rpm.sh 2.0.0 0001
+# Output: build/dist/rulbased-2.0.0-0001.noarch.rpm
 ```
 
----
+### 2. Upload and install the RPM to BIG-IP
 
-## Installing
+The install script will prompt for the BIG-IP password if it is not already
+set in the `BIGIP_PASS` environment variable:
+
+```bash
+bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.0.0-0001.noarch.rpm
+# Password for admin@<host>: ******
+```
+
+Or set `BIGIP_PASS` in the environment first (preferred for CI/CD):
 
 ```bash
 export BIGIP_PASS=<password>
-chmod +x build/install-rpm.sh
-./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.2.0-0001.noarch.rpm
+bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.0.0-0001.noarch.rpm
 ```
 
-**After install, create the backup directory:**
+> **Use the BIG-IP `admin` account, not `root`.** BIG-IP blocks `root` from
+> iControl REST by design — authentication will fail with 401.
+
+> **macOS note:** the zip archive does not preserve the executable bit on
+> extraction. Run the scripts via `bash ./build/install-rpm.sh ...` (as shown
+> above), or `chmod +x build/*.sh` once after extraction.
+
+### 3. Run the post-install script on the BIG-IP (required)
+
+The RPM extracts `post-install.sh` to
+`/var/config/rest/iapps/rulbased/build/post-install.sh` on the BIG-IP. Run
+it via SSH as root to create `/shared/rulbased-backups` (where backup
+exports are retained on-device):
+
 ```bash
-ssh root@<bigip> "mkdir -p /shared/rulbased-backups && chown 198:498 /shared/rulbased-backups"
+ssh root@<bigip> bash /var/config/rest/iapps/rulbased/build/post-install.sh
 ```
 
-**Accessing the GUI:**
-```
-https://<bigip>/mgmt/shared/irule-versioner/ui
-```
+The script is idempotent — safe to run repeatedly, no-op if everything is
+already in place.
 
----
+> **Why this step is needed.** The iApps LX install pipeline does not
+> execute RPM `%post` scriptlets. Installed packages are visible via
+> `/mgmt/shared/iapp/global-installed-packages` but absent from the system
+> RPM database (`rpm -q <pkg>` returns "not installed"), which means the
+> iApps LX framework extracts the RPM payload directly and bypasses the
+> scriptlet machinery. Directory creation under `/shared/` (owned root:root
+> 0755 by default) requires root privileges that the restnoded worker
+> process (uid 198) does not have, so this must be done from a root shell.
 
-## Verifying the install
+### 4. Verify the install
 
 ```bash
-# All 4 workers should appear
-ssh root@<BIGIP> "grep 'has started' /var/log/restnoded/restnoded.log | grep irule-versioner"
+# All 4 workers should appear (rulesWorker, settingsWorker, uiWorker, configProcessor)
+ssh root@<BIGIP> "grep 'has started' /var/log/restnoded/restnoded.log | grep -i rulbased"
 
-# Rules list
-curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules \
-  | python3 -m json.tool
+# Rules endpoint — returns JSON with items[] (empty on fresh install,
+# populated after first poll cycle)
+curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/rulbased/rules | jq .
+# (if jq is not installed, omit '| jq .' or substitute '| python3 -m json.tool')
 ```
+
+### 5. Access the GUI
+
+```
+https://<bigip>/mgmt/shared/rulbased/ui
+```
+
+> **Migrating from `irule-versioner` 1.x?** Uninstall the old package first —
+> see the [Uninstalling](#uninstalling) section for the full procedure. Both
+> packages can technically coexist (they register under different URI paths),
+> but the old one's poll worker will keep running and fight with the new one
+> over drift detection.
 
 ---
 
@@ -210,7 +248,7 @@ curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/irule-versioner/rules 
 
 ```bash
 export BIGIP_PASS=<password>
-./build/install-rpm.sh <host> admin build/dist/irule-versioner-1.2.0-0001.noarch.rpm
+bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.0.0-0001.noarch.rpm
 ```
 
 ### Before a TMOS version upgrade
@@ -224,7 +262,7 @@ Alternatively, from the command line:
 ```bash
 # Pre-upgrade backup
 tar -czf /shared/rulbased-data-backup-$(date +%Y%m%d).tar.gz \
-  /var/config/rest/iapps/irule-versioner/data/
+  /var/config/rest/iapps/rulbased/data/
 
 # Post-upgrade restore (after TMOS upgrade + RPM reinstall)
 tar -xzf /shared/rulbased-data-backup-<date>.tar.gz -C /
@@ -235,28 +273,163 @@ bigstart restart restnoded
 
 ## Uninstalling
 
+The F5-sanctioned way to remove an iApps LX package is the
+`package-management-tasks` endpoint with `operation: "UNINSTALL"`. This
+deregisters all workers, removes the package's `nodejs/` and `presentation/`
+trees, and restarts restnoded — all asynchronously.
+
+### Step 1: Find the exact package name
+
 ```bash
 export BIGIP_PASS=<password>
 
-# Find the package name
+# Using jq (from your build machine — uses regex):
 curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-packages \
-  | python3 -c "import json,sys; [print(p['packageName']) for p in json.load(sys.stdin)['items'] if 'irule' in p['packageName'].lower()]"
+  | jq -r '.items[] | select(.packageName | test("rulbased|irule-versioner")) | .packageName'
 
-# Uninstall
-curl -sk -u admin:$BIGIP_PASS \
-  -H "Content-Type: application/json" \
-  -X POST https://<BIGIP>/mgmt/shared/iapp/package-management-tasks \
-  -d '{"operation":"UNINSTALL","packageName":"irule-versioner-1.2.0-0001.noarch"}'
+# Using jq from the BIG-IP itself (no regex support — uses contains):
+curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-packages \
+  | jq -r '.items[] | select(.packageName | contains("rulbased") or contains("irule-versioner")) | .packageName'
+
+# Python fallback (works anywhere python3 is installed):
+curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-packages \
+  | python3 -c "import json,sys; [print(p['packageName']) for p in json.load(sys.stdin)['items'] if 'rulbased' in p['packageName'].lower() or 'irule-versioner' in p['packageName'].lower()]"
 ```
 
-The data directory is NOT deleted on uninstall.
+> **BIG-IP `jq` note:** the jq binary shipped on BIG-IP is compiled without
+> the Oniguruma regex library, so `test()`, `match()`, `sub()`, `gsub()`,
+> `capture()`, `splits()`, and `scan()` all fail with
+> `jq was compiled without ONIGURUMA regex libary`. Use `contains()` and
+> string equality instead when running jq commands through SSH on the BIG-IP.
+> The build-machine jq (macOS Homebrew, apt, brew, etc.) has regex support
+> and the `test()` form works fine there.
+
+You should get output like `rulbased-2.0.0-0001.noarch`.
+
+### Step 2: Submit the UNINSTALL task
+
+```bash
+curl -sk -u admin:$BIGIP_PASS -H 'Content-Type: application/json' \
+  -X POST https://<BIGIP>/mgmt/shared/iapp/package-management-tasks \
+  -d '{"operation":"UNINSTALL","packageName":"rulbased-2.0.0-0001.noarch"}' \
+  | jq .
+```
+
+The response includes an `id` UUID. The task is asynchronous — the RPM
+`%preun` scriptlet fires, workers deregister, and restnoded restarts
+(briefly — 5–10 seconds).
+
+### Step 3: Verify the uninstall completed
+
+```bash
+# Should return empty — package gone from the installed list:
+curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-packages \
+  | jq -r '.items[] | select(.packageName | contains("rulbased")) | .packageName'
+
+# The Rülbased endpoints should now 404:
+curl -sk -u admin:$BIGIP_PASS -w "\nHTTP %{http_code}\n" \
+  https://<BIGIP>/mgmt/shared/rulbased/rules
+# Expected: HTTP 404
+```
+
+### What uninstall does and does not remove
+
+| Path / resource | Effect |
+|---|---|
+| `/var/config/rest/iapps/rulbased/nodejs/`, `/presentation/`, `manifest.json`, `block_template.json` | Removed (RPM-managed) |
+| `/var/config/rest/iapps/rulbased/data/` | **Preserved** — version history survives uninstall |
+| `/shared/rulbased-backups/` | **Preserved** — export archives retained |
+| `/var/config/rest/downloads/rulbased-*.rpm` | **Preserved** — the uploaded RPM stays cached |
+| restnoded workers | Deregistered (restnoded is restarted by the framework) |
+
+If you want the data directory gone too (e.g. moving from `irule-versioner`
+to `rulbased` and no longer need the old history):
+
+```bash
+ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/rulbased/"
+# or for the legacy 1.x package:
+ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/irule-versioner/"
+```
+
+To also clear the backup directory:
+
+```bash
+ssh root@<BIGIP> "rm -rf /shared/rulbased-backups/"
+```
+
+---
+
+## Troubleshooting
+
+### Backup download says "On-device copy skipped"
+
+The browser download worked, but the `/shared/rulbased-backups/` copy
+didn't happen. Cause: the backup directory doesn't exist, and restnoded
+(uid 198) can't create subdirs under `/shared/` (root:root 0755).
+
+Fix — run the post-install script as root:
+
+```bash
+ssh root@<BIGIP> bash /var/config/rest/iapps/rulbased/build/post-install.sh
+```
+
+Then retry the backup. Existing downloaded backups are unaffected.
+
+### Everything works except exports — worker seems fine otherwise
+
+Same root cause as above. The `/rules/export` endpoint uses
+`/shared/rulbased-backups/` for on-device retention; if it's missing,
+only the on-device copy fails (the browser download still works and
+returns `devicePathError` in the JSON response indicating what to fix).
+
+### Install "succeeded" but `/shared/rulbased-backups` was never created
+
+Known behavior — the iApps LX install pipeline bypasses RPM scriptlets.
+The package shows up in `/mgmt/shared/iapp/global-installed-packages` but
+is absent from the OS-level RPM database:
+
+```bash
+rpm -q rulbased
+# package rulbased is not installed
+```
+
+This is by design on the F5 side and affects every iApps LX extension.
+Always run `post-install.sh` after install. See the
+[Installing](#installing) section.
+
+### GUI loads but returns 404 or "Worker not found" on endpoints
+
+Check that restnoded has the workers registered:
+
+```bash
+ssh root@<BIGIP> "grep 'has started' /var/log/restnoded/restnoded.log | grep -i rulbased | tail -5"
+```
+
+You should see four workers: `configProcessor`, `rulesWorker`,
+`settingsWorker`, `uiWorker`. If any are missing, check the log for
+syntax errors:
+
+```bash
+ssh root@<BIGIP> "tail -100 /var/log/restnoded/restnoded.log | grep -iE 'error|exception|unexpected'"
+```
+
+### Post-install marker file
+
+The `post-install.sh` script and the RPM `%post` (on systems that do run
+it) both write a diagnostic marker at
+`/var/config/rest/iapps/rulbased-post-install.log`. Reading it tells you
+which setup path actually executed:
+
+```bash
+ssh root@<BIGIP> "cat /var/config/rest/iapps/rulbased-post-install.log"
+```
 
 ---
 
 ## Re-baselining
 
 ```bash
-ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/irule-versioner/data/*"
+ssh root@<BIGIP> "rm -rf /var/config/rest/iapps/rulbased/data/*"
 ssh root@<BIGIP> "bigstart restart restnoded"
 ```
 
@@ -276,7 +449,7 @@ pattern and mandatory ownership rules.
 
 ## REST API reference
 
-All endpoints are under `/mgmt/shared/irule-versioner/`.
+All endpoints are under `/mgmt/shared/rulbased/`.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -311,7 +484,7 @@ See Phase 5 section above — behaviour unchanged.
 ## Version store layout
 
 ```
-/var/config/rest/iapps/irule-versioner/data/
+/var/config/rest/iapps/rulbased/data/
   Common/
     my_rule/
       manifest.json     ← version history + retention policy + acknowledged flag

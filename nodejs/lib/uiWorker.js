@@ -4,9 +4,9 @@ var fs = require('fs');
 var path = require('path');
 var logger = require('./logger');
 
-var WORKER_URI_PATH = 'shared/irule-versioner/ui';
+var WORKER_URI_PATH = 'shared/rulbased/ui';
 
-var PRESENTATION_DIR = '/var/config/rest/iapps/irule-versioner/presentation';
+var PRESENTATION_DIR = '/var/config/rest/iapps/rulbased/presentation';
 
 var MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -25,13 +25,13 @@ var MIME_TYPES = {
  * bypassing Apache entirely. This allows the full-page app.html to be
  * accessed with Basic auth (no browser session required) at:
  *
- *   https://<bigip>/mgmt/shared/irule-versioner/ui
+ *   https://<bigip>/mgmt/shared/rulbased/ui
  *     -> serves presentation/app.html
  *
- *   https://<bigip>/mgmt/shared/irule-versioner/ui/app.html
+ *   https://<bigip>/mgmt/shared/rulbased/ui/app.html
  *     -> serves presentation/app.html
  *
- *   https://<bigip>/mgmt/shared/irule-versioner/ui/vendor/codemirror.min.js
+ *   https://<bigip>/mgmt/shared/rulbased/ui/vendor/codemirror.min.js
  *     -> serves presentation/vendor/codemirror.min.js
  *
  * isPassThrough = true so all sub-paths route here.
@@ -43,7 +43,7 @@ function UiWorker() {
 }
 
 UiWorker.prototype.onStart = function (success) {
-  this.logger.info('[irule-versioner] UiWorker started, serving from ' + PRESENTATION_DIR);
+  this.logger.info('[Rülbased] UiWorker started, serving from ' + PRESENTATION_DIR);
   success();
 };
 
@@ -53,8 +53,8 @@ UiWorker.prototype.onGet = function (restOperation) {
 
   // Strip the worker base path to get the relative file path
   var prefixes = [
-    '/mgmt/shared/irule-versioner/ui',
-    '/shared/irule-versioner/ui'
+    '/mgmt/shared/rulbased/ui',
+    '/shared/rulbased/ui'
   ];
 
   var relative = pathname;

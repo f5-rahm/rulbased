@@ -4,15 +4,15 @@ var settings = require('./settings');
 var notifier = require('./notifier');
 var logger = require('./logger');
 
-var WORKER_URI_PATH = 'shared/irule-versioner/settings';
+var WORKER_URI_PATH = 'shared/rulbased/settings';
 
 /**
  * Settings Worker
  *
- * GET  /mgmt/shared/irule-versioner/settings               - read current settings
- * GET  /mgmt/shared/irule-versioner/settings/test-syslog   - fire a test syslog entry
- * GET  /mgmt/shared/irule-versioner/settings/test-webhook  - fire a test webhook
- * PUT  /mgmt/shared/irule-versioner/settings               - update settings
+ * GET  /mgmt/shared/rulbased/settings               - read current settings
+ * GET  /mgmt/shared/rulbased/settings/test-syslog   - fire a test syslog entry
+ * GET  /mgmt/shared/rulbased/settings/test-webhook  - fire a test webhook
+ * PUT  /mgmt/shared/rulbased/settings               - update settings
  *
  * Note: test-webhook is a GET (not POST) because restnoded rejects bodyless
  * POSTs at the framework level before onPost is called.  A GET is correct
@@ -35,7 +35,7 @@ SettingsWorker.prototype.onGet = function (restOperation) {
     notifier.testSyslog(function (err) {
       var result = err
         ? { ok: false, error: err.message }
-        : { ok: true, message: 'Entries written — check: grep irule-versioner /var/log/ltm && grep irule-versioner /var/log/audit' };
+        : { ok: true, message: 'Entries written — check: grep rulbased /var/log/ltm && grep rulbased /var/log/audit' };
       logger.info('SettingsWorker: test-syslog result: ' + JSON.stringify(result));
       restOperation.setStatusCode(200);
       restOperation.setBody(result);

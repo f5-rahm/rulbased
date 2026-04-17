@@ -219,7 +219,7 @@ asyncTest('getRuleContent returns empty string when apiAnonymous absent', functi
 
 console.log('\nversionStore (async)');
 
-var tmpDir = path.join(os.tmpdir(), 'irule-versioner-test-' + Date.now());
+var tmpDir = path.join(os.tmpdir(), 'rulbased-test-' + Date.now());
 
 asyncTest('init creates data directory and audit.jsonl', function (done) {
   versionStore.init(tmpDir, function (err) {

@@ -15,10 +15,10 @@ along the lines of:
 > I am building an iApps LX extension for BIG-IP called "Rülbased".
 > The attached PLANNING.md contains all spec decisions, data models, REST API
 > definitions, GUI specifications, and the current implementation status.
-> Phase 6 is complete. Please read the planning doc and help me continue with
-> Phase 7 (package rename: irule-versioner → rulbased).
+> Phase 7 is complete. Please read the planning doc and help me continue with
+> Phase 8 (code review, security audit, and cleanup).
 
-Upload both this file and the phase source zip (`irule-versioner-phase5.zip`)
+Upload both this file and the latest phase source zip (`rulbased-phase7.zip`)
 to give the new session full context.
 
 ---
@@ -42,7 +42,7 @@ OUTFILE="patch-phaseN.sh"
 cat << 'SCRIPT_HEADER'
 #!/usr/bin/env bash
 set -euo pipefail
-BASE="/var/config/rest/iapps/irule-versioner"
+BASE="/var/config/rest/iapps/rulbased"
 [ -d "$BASE" ] || { echo "ERROR: not found"; exit 1; }
 
 write_file() {
@@ -73,7 +73,7 @@ CODE="000"
 for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 3
   CODE=$(curl -sk -o /dev/null -w "%{http_code}" -u "admin:" \
-    "http://localhost:8100/mgmt/shared/irule-versioner/rules" 2>/dev/null || echo "000")
+    "http://localhost:8100/mgmt/shared/rulbased/rules" 2>/dev/null || echo "000")
   if [ "$CODE" = "200" ]; then echo "    healthy after $((i*3))s"; break; fi
   echo "    …$((i*3))s (HTTP $CODE)"
 done
@@ -124,7 +124,7 @@ If the health check returns 404 or workers are missing from the log, the first
 thing to check is file ownership:
 
 ```bash
-ssh root@<bigip> "ls -la /var/config/rest/iapps/irule-versioner/nodejs/lib/"
+ssh root@<bigip> "ls -la /var/config/rest/iapps/rulbased/nodejs/lib/"
 # All files should be owned by restnode (uid 198) or whatever user owns versionStore.js
 # Any root-owned .js file will prevent that worker from loading
 ```
@@ -222,7 +222,7 @@ support for both static iRules and per-device parameterised templates.
 
 ### Version manifest — per iRule
 
-**Location:** `/var/config/rest/iapps/irule-versioner/data/<partition>/<ruleName>/manifest.json`
+**Location:** `/var/config/rest/iapps/rulbased/data/<partition>/<ruleName>/manifest.json`
 
 Rule names containing `/` are normalised to `_` for the directory name.
 
@@ -264,7 +264,7 @@ Rule names containing `/` are normalised to `_` for the directory name.
 
 ### Version blob
 
-**Location:** `/var/config/rest/iapps/irule-versioner/data/<partition>/<ruleName>/<hash>.tcl`
+**Location:** `/var/config/rest/iapps/rulbased/data/<partition>/<ruleName>/<hash>.tcl`
 
 Contains the raw TCL body only — no `ltm rule /P/N { }` wrapper. The wrapper
 is added by `tmsh.js` when constructing the staging file for deployment.
@@ -308,7 +308,7 @@ Variable values are validated against an allowlist of safe characters
 
 ### Audit log
 
-**Location:** `/var/config/rest/iapps/irule-versioner/data/audit.jsonl`
+**Location:** `/var/config/rest/iapps/rulbased/data/audit.jsonl`
 
 Append-only JSON Lines format. One JSON object per line.
 
@@ -323,11 +323,11 @@ Append-only JSON Lines format. One JSON object per line.
 
 ### Global settings
 
-**Location:** `/var/config/rest/iapps/irule-versioner/data/settings.json`
+**Location:** `/var/config/rest/iapps/rulbased/data/settings.json`
 
 ```json
 {
-  "dataDirectory": "/var/config/rest/iapps/irule-versioner/data",
+  "dataDirectory": "/var/config/rest/iapps/rulbased/data",
   "pollIntervalSeconds": 300,
   "syslogEnabled": true,
   "webhookUrl": "",
@@ -349,7 +349,7 @@ form. They are never returned in plain text via the REST API.
 ### Full filesystem layout
 
 ```
-/var/config/rest/iapps/irule-versioner/
+/var/config/rest/iapps/rulbased/
   nodejs/                         <- processor code (RPM-managed)
   presentation/                   <- GUI files (RPM-managed)
   manifest.json                   <- iApps LX package tag
@@ -372,7 +372,7 @@ form. They are never returned in plain text via the REST API.
 
 ## REST API — full surface (all phases)
 
-All endpoints are under `/mgmt/shared/irule-versioner/`. Authentication uses
+All endpoints are under `/mgmt/shared/rulbased/`. Authentication uses
 the existing BIG-IP admin session cookie — no separate credentials.
 
 ### Rules worker (`/rules`)
@@ -466,13 +466,13 @@ Shown inside BIG-IP TMUI at the iApps LX block presentation URL. Read-only.
 ### Full-page application (`presentation/app.html`) — Phase 2+
 
 Single HTML file, vanilla JS only (no framework). Communicates with the
-config processor via `fetch()` calls to `/mgmt/shared/irule-versioner/`.
+config processor via `fetch()` calls to `/mgmt/shared/rulbased/`.
 
 #### Overall layout
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Header: iRule Versioner  [device: bigip-01]  [settings gear]   │
+│  Header: Rülbased         [device: bigip-01]  [settings gear]   │
 ├──────────────────┬──────────────────────────────────────────────┤
 │                  │                                              │
 │  iRule list      │  Detail panel (tabbed)                      │
@@ -565,7 +565,7 @@ Three parallel notification channels, all triggered by deploy/rollback/drift eve
    action type, stacks up to 3
 2. **Syslog** — via `tmsh` `log local0.notice` call from the config processor;
    facility and severity configurable; message format:
-   `irule-versioner: [action] /partition/name hash=<h> author=<a> reason=<r>`
+   `rulbased: [action] /partition/name hash=<h> author=<a> reason=<r>`
 3. **Webhook** — HTTP POST to configured URL; JSON body:
    ```json
    {
@@ -1075,25 +1075,218 @@ the BIG-IP's TMUI-side validation path wraps content differently.
 
 ---
 
-### Phase 7 — Package rename: irule-versioner → rulbased
+### Phase 7 — Package rename: irule-versioner → rulbased ✅ COMPLETE
 
-*(existing Phase 7 content unchanged — see above)*
+**Status:** Implemented and validated on BIG-IP TMOS 21.x. Delivered as a
+flag-day rebuild (no patch-script iteration) cut directly against a full
+`build-rpm.sh` + `install-rpm.sh` + `post-install.sh` installation flow.
+No data migration was performed — all existing data at the time of the
+rename was test data; the old installation and its
+`/var/config/rest/iapps/irule-versioner/` directory are left untouched
+for the operator to clean up manually if desired. Real-device validation
+uncovered the iApps LX scriptlet-bypass behaviour (see lessons learned
+below), which was addressed mid-phase by adding a standalone
+`post-install.sh` setup script shipped inside the RPM payload.
 
-`/shared/rulbased-backups` must be created and chowned to uid 198 in the RPM
-`%post` scriptlet as part of this phase:
+**Deliverables completed:**
 
-```bash
-%post
-mkdir -p /shared/rulbased-backups
-chown 198:498 /shared/rulbased-backups
-chmod 750 /shared/rulbased-backups
-```
+Code:
+- `WORKER_URI_PATH` renamed in `rulesWorker.js`, `settingsWorker.js`,
+  `uiWorker.js`, `configProcessor.js` — now `shared/rulbased/{rules,settings,ui}`
+  and `shared/iapp/processors/rulbased`
+- Hardcoded data-directory path in `rulesWorker.onStart`, `configProcessor.onPost`,
+  `configProcessor.onPut` — now `/var/config/rest/iapps/rulbased/data`
+- `settings.js` default `dataDirectory` — renamed
+- `uiWorker.PRESENTATION_DIR` — renamed
+- `logger.js` `PREFIX` — renamed from `[irule-versioner]` to `[Rülbased]`
+  (UTF-8 literal in source; restnoded writes logs UTF-8 without transformation)
+- All inline `self.logger.info('[irule-versioner] ...')` strings in
+  `rulesWorker.js` onStart and `uiWorker.js` — renamed to `[Rülbased]`. These
+  use restnoded's per-worker `this.logger` (bypass our `logger.js` PREFIX) so
+  they had to be updated explicitly
+- URI prefix-stripping arrays in `rulesWorker.js` and `uiWorker.js` — renamed
+- `configProcessor.js` `VERSION` constant — bumped to `2.0.0`
+- `rulesWorker._exportData` rewritten: removed the broken
+  `execFile('/bin/mkdir', ['-p', backupDir])` fallback (restnoded uid 198
+  cannot create subdirs under `/shared/`), added `fs.statSync` pre-check,
+  response now includes `devicePathSaved` (boolean) and `devicePathError`
+  (string) so the GUI can show an actionable message when on-device copy
+  is disabled. Browser download path unchanged
+
+RPM:
+- `build-rpm.sh`: `APP_NAME` → `rulbased`; default VERSION arg → `2.0.0`;
+  `%post` logger tag and echo prefixes → `rulbased`; **`%files` list rebuilt**
+  from actual `nodejs/lib/` contents (Phase 6 pre-existing bug: the list
+  was missing `bigipClient.js`, `migrations.js`, `notifier.js`, `uiWorker.js`,
+  and `app.html`); staging step now also includes `build/post-install.sh`
+  so it ships inside the RPM payload
+- `%post` scriptlet hardened: writes a diagnostic marker file at
+  `/var/config/rest/iapps/rulbased-post-install.log` so execution can be
+  verified. Note: **the iApps LX install pipeline does not execute
+  scriptlets** (see lessons learned below); `%post` is retained for the
+  edge case of manual `rpm -i` installation only
+- New `build/post-install.sh` — standalone operator-run script, idempotent,
+  creates `/shared/rulbased-backups` with uid:gid `198:498` / mode `0750`
+  and the data directory. Shipped at
+  `/var/config/rest/iapps/rulbased/build/post-install.sh` inside the RPM
+- `install-rpm.sh`: example filename, verification curl URLs, log-tail grep
+  (now `grep -i rulbased` so the ASCII syslog tag and UTF-8 log prefix
+  both match); dropped the broken `/mgmt/toc | grep rulbased` check
+  (known F5 platform issue, restjavad auth-routing bug, unrelated to us);
+  password now prompts interactively via `read -rs` if `BIGIP_PASS` is
+  not set in the environment; post-install block prints the
+  `ssh root@<bigip> bash .../post-install.sh` command the operator must
+  run
+- `bundle-codemirror.sh`: comment prose
+
+GUI:
+- `presentation/index.html`: title, h1, version badge (`v1.0.0` → `v2.0.0`),
+  `Open Full Manager` href (now `/mgmt/shared/rulbased/ui` — the canonical
+  restnoded-served URL, not the static `/iapps/...` path), `BASE` constant
+- `presentation/app.html`: file header comment, `API` constant,
+  dashboard version pill (`v1.2.0` → `v2.0.0`), new `v2.0.0` changelog entry,
+  backup modal text softened (removed the misleading "A copy is also saved
+  on the device" claim that was only true when `post-install.sh` had run),
+  `exportBackup()` handler updated to surface `devicePathSaved`/
+  `devicePathError` from the REST response as a warning toast and an
+  explicit status-line message
+
+Docs:
+- `README.md`: directory-tree label, build/install/uninstall examples with
+  new RPM filenames, verification curl URLs, version-store filesystem layout,
+  REST API base path sentence, pre-upgrade tar path, re-baseline rm path;
+  removed the now-obsolete manual "create backup directory" step (the RPM
+  `%post` does it)
+- `PLANNING.md`: resuming section, patch-script canonical template,
+  data-model locations, filesystem layout, REST API base path, GUI fetch
+  base, ASCII mockup header, syslog example format, this completion entry
+
+Test:
+- `test/unit.js`: tmpDir prefix
+- `test/test-external-change.sh`: API URL, settings URL hint, test iRule's
+  internal `log local0.` message (using ASCII `Rulbased` because it emits
+  through TCL → syslog, same reasoning as the syslog tag)
+
+Block template:
+- `block_template.json`: `name` (`irule_versioner` → `rulbased`), description,
+  `dataDirectory` default, `configProcessorReference.link`,
+  `presentationHtmlReference.link`
+
+**Lessons learned:**
+
+- **Grep for both the hyphenated package name AND the prose form.** The first
+  few sweep passes grepped for `irule-versioner` only and missed 4 stragglers
+  that used the prose form `iRule Versioner` (in `build/bundle-codemirror.sh`
+  comments and a TCL log message in `test/test-external-change.sh`). A
+  comprehensive sweep needs both: `grep -rn "irule-versioner\|iRule Versioner"`.
+
+- **`[Rülbased]` (UTF-8) is safe as a log PREFIX, but keep the syslog tag ASCII.**
+  The Node.js `logger.js` PREFIX is written to `/var/log/restnoded/restnoded.log`
+  by the restnoded logger framework, which handles UTF-8 correctly. But the
+  syslog tag passed to `/usr/bin/logger -t` must stay ASCII (`rulbased`) because
+  syslog tag fields are process names and do not support non-ASCII. Same applies
+  to any TCL `log local0.` messages that iRules emit.
+
+- **Pre-existing Phase 6 `%files` bug.** The RPM spec's `%files` list had not
+  been updated as new worker files were added in Phase 2/5/6 — `bigipClient.js`,
+  `migrations.js`, `notifier.js`, `uiWorker.js`, and `app.html` were all
+  missing. Phase 6 RPM installs would have failed at `rpmbuild` time (missing
+  files in build root). This went unnoticed because Phase 2–6 iteration used
+  the patch-script approach and never exercised the RPM build path. The rule
+  going forward: any time a new file is added to `nodejs/lib/` or
+  `presentation/`, also append it to `%files` in `build-rpm.sh` in the same
+  change.
+
+- **The widget `Open Full Manager` href was pointing at the static-file path
+  (`/iapps/rulbased/presentation/app.html`), not the uiWorker-served path
+  (`/mgmt/shared/rulbased/ui`).** Updated during this phase. The
+  uiWorker-served path is the canonical one (Basic auth works cleanly, no
+  Apache session assumptions) per the Phase 2 lessons.
+
+- **Node `--check` all `.js` files before shipping.** Every .js file was
+  re-validated after every edit. Part of the Phase 6 lessons rulebook,
+  honoured throughout Phase 7.
+
+- **The iApps LX install pipeline bypasses RPM scriptlets entirely.**
+  Discovered during Phase 7 testing: an iApps LX RPM installed via
+  `POST /mgmt/shared/iapp/package-management-tasks` is visible in
+  `/mgmt/shared/iapp/global-installed-packages` but does NOT appear in the
+  system RPM database. `rpm -q rulbased` returns `package rulbased is not
+  installed` even though the package is fully functional. This confirms
+  the install path is `rpm2cpio | cpio -i` (or equivalent payload
+  extraction), not `rpm -i` or `rpm -U`, and means `%post`, `%pre`,
+  `%preun`, `%postun`, and `%posttrans` scriptlets never execute for
+  iApps LX packages. This is not documented by F5 but is consistent with
+  how their own extensions (AS3, Declarative Onboarding, Telemetry
+  Streaming) handle post-install setup: deferred initialization from
+  within Node.js `onStart`, not from `%post`. Implication for Rülbased:
+  we cannot rely on `%post` to create `/shared/rulbased-backups`.
+  Solution shipped in Phase 7: a standalone `build/post-install.sh`
+  script distributed inside the RPM payload at
+  `/var/config/rest/iapps/rulbased/build/post-install.sh` that the
+  operator runs via SSH as root after install. Idempotent, safe to re-run.
+  The `%post` scriptlet is retained in the spec for the edge case of
+  manual `rpm -i` installation, and now also writes a marker file at
+  `/var/config/rest/iapps/rulbased-post-install.log` for future
+  scriptlet-execution diagnostics.
+
+- **restnoded cannot create subdirectories under `/shared/`.** restnoded
+  runs as uid 198 (restnode:restnoded). `/shared/` is `root:root 0755` by
+  default on BIG-IP. Any code path that tries to `mkdir /shared/...` from
+  within a worker will fail with EACCES. The previous Phase 6 export code
+  had an `execFile('/bin/mkdir', ['-p', backupDir])` fallback that looked
+  defensive but was actually dead code — it could never succeed. Removed
+  in Phase 7; export now pre-checks `fs.statSync` on the backup dir and
+  returns `devicePathSaved: false` with a `devicePathError` message if
+  it's missing. The GUI surfaces this as a yellow toast telling the
+  operator to run `post-install.sh`.
+
+- **BIG-IP's `jq` is compiled without Oniguruma regex.** Any jq command
+  that uses `test()`, `match()`, `sub()`, `gsub()`, `capture()`,
+  `splits()`, or `scan()` fails on-box with
+  `jq was compiled without ONIGURUMA regex libary`. Confirmed by F5
+  DevCentral documentation. Documentation examples that run on-device
+  must use `contains()` and string equality, not regex. jq on the build
+  machine (macOS Homebrew, apt, etc.) has regex support and works fine.
+
+- **The `/mgmt/toc` endpoint is unreliable for install verification.**
+  Hitting `/mgmt/toc` on some TMOS versions returns
+  `URI path /mgmt/logmein.html not registered` instead of the expected
+  REST catalog. This is a known F5 platform issue (restjavad auth-routing
+  bug, tracked at F5 bug tracker ID 877145 and others), not related to
+  our package. Removed from `install-rpm.sh` verification output in
+  Phase 7; replaced with a direct `/mgmt/shared/rulbased/rules` check.
+
+- **The two-step install (install-rpm.sh + post-install.sh) is a footgun.**
+  Discovered in real-device testing: the operator ran `install-rpm.sh`,
+  it succeeded, they tried to use the product, and exports silently
+  failed because `post-install.sh` had not been run. The install script
+  *printed* the post-install command but didn't run it. Two-step flows
+  with "please remember to also run this" reminders get skipped in
+  practice. Candidate improvements for Phase 8: have `install-rpm.sh`
+  run `post-install.sh` automatically over SSH after the iControl REST
+  install completes (with `--skip-post-install` opt-out), or prompt
+  interactively. The current README and installer output now make the
+  post-install step unmissable by restructuring as numbered steps 1–5
+  rather than prose-with-callout.
+
+- **Build-machine vs device script parity matters.** During testing the
+  operator had an older version of the source on disk (phase7 or phase7b)
+  but was trying to run `post-install.sh` — which didn't exist in those
+  older zips and wouldn't be inside the RPM they built. The `post-install.sh`
+  script lives in `build/` on the source tree and is staged into the RPM
+  payload at `/var/config/rest/iapps/rulbased/build/post-install.sh` for
+  operators to run on the BIG-IP via SSH. Both copies (Mac and BIG-IP)
+  must be from the same phase. Rule going forward: when we ship a
+  dependency between a Mac-side script and a BIG-IP-side file (or vice
+  versa), make the RPM version number the source of truth and have the
+  scripts print it at startup so mismatches are immediately visible.
 
 ---
 
 ### Phase 8 — Code review, security audit, and cleanup
 
-**Purpose:** Before cutting v1.0.0 for production use, perform a systematic
+**Purpose:** Before cutting v2.0.0 for production use, perform a systematic
 review of the entire codebase to identify and resolve:
 
 - **Dev artifacts:** console.log statements, debug flags left on, placeholder
@@ -1134,67 +1327,10 @@ review of the entire codebase to identify and resolve:
 
 ---
 
-### Phase 7 — Package rename: irule-versioner → rulbased
+## Project risks (ongoing)
 
-**Background — why deferred:**
-The package directory name (`irule-versioner`) and all worker URL paths
-(`/mgmt/shared/irule-versioner/...`) are baked into the RPM spec and every
-`WORKER_URI_PATH` constant. Changing them is a flag day — full RPM rebuild,
-reinstall, and data directory migration. All feature phases (6) continue
-using the existing paths. Phase 7 is a single dedicated rename-and-rebrand
-operation performed after all features are complete and validated.
-
-**Scope — everything that must change atomically:**
-
-Code:
-- `WORKER_URI_PATH` in `rulesWorker.js`, `settingsWorker.js`, `uiWorker.js`,
-  `configProcessor.js` — change `shared/irule-versioner/...` to `shared/rulbased/...`
-- `onStart` data directory hardcoded path in `rulesWorker.js`:
-  `/var/config/rest/iapps/irule-versioner/data` → `/var/config/rest/iapps/rulbased/data`
-- `versionStore.js` and any other module with the old path hardcoded
-- All `BASE` references in build scripts and patch scripts
-
-RPM:
-- RPM `Name:` field in the spec: `irule-versioner` → `rulbased`
-- RPM `%files` section paths
-- Package install/uninstall curl commands in `install-rpm.sh`
-
-Data migration (on-device, run once):
-```bash
-# 1. Stop restnoded
-bigstart stop restnoded
-
-# 2. Move the data directory to preserve all version history
-mv /var/config/rest/iapps/irule-versioner/data \
-   /var/config/rest/iapps/rulbased/data   # after RPM installs the new package
-
-# Alternatively, if old RPM is still installed alongside new:
-cp -a /var/config/rest/iapps/irule-versioner/data \
-      /var/config/rest/iapps/rulbased/data
-
-# 3. Install new RPM, start restnoded
-bigstart start restnoded
-```
-
-`lib/migrations.js` (Phase 6) will include a startup check that detects the
-old data path and offers a one-click migration in the settings page.
-
-GUI and docs:
-- All `irule-versioner` references in `app.html`, `index.html` (API base URL,
-  any hardcoded paths)
-- README — all URL examples, curl commands, file path references
-- PLANNING.md — resuming section, file structure, all path references
-- `block_template.json` if it contains the old name
-
-**New URL after rename:**
-```
-https://<bigip>/mgmt/shared/rulbased/ui
-```
-
-**Grep to find all remaining references before cutting the rename patch:**
-```bash
-grep -r "irule-versioner" nodejs/ presentation/ build/ --include="*.js" --include="*.html" --include="*.sh" -l
-```
+This risk register applies across all phases. Mitigations marked "Already
+mitigated" are resolved; the remainder are active considerations.
 
 | Risk | Mitigation |
 |------|------------|
@@ -1208,14 +1344,14 @@ grep -r "irule-versioner" nodejs/ presentation/ build/ --include="*.js" --includ
 | Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution (Phase 9 — optional) |
 | CodeMirror bundle size | Inlined directly into `app.html` as `<script>`/`<style>` blocks (~187KB). No vendor file requests. CDN not used. `bundle-codemirror.sh` available if separate vendor files are needed for RPM size reasons. |
 | BIG-IP management plane has no outbound internet | GitHub integration (Phase 9 — optional) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
-| Concurrent deploys to the same iRule | Add per-rule deploy lock in Phase 2 (simple in-memory Map of `<fullPath> → boolean`) |
+| Concurrent deploys to the same iRule | Already mitigated: per-rule deploy lock (`_deployLock` in-memory Map) in `rulesWorker.js` |
 
 ---
 
 ## File structure (complete)
 
 ```
-irule-versioner/
+rulbased/
 ├── PLANNING.md                    ← this file
 ├── README.md                      ← install and usage guide
 ├── manifest.json                  ← iApps LX tag: { "tags": ["IAPP"] }
@@ -1331,7 +1467,7 @@ outbound HTTPS from BIG-IP — document this as a network prerequisite.
 **Planned deliverables (when resumed):**
 - `lib/githubClient.js` — GitHub REST API v3 client (Node.js `https` built-in,
   no npm deps); modelled after the `notifier.js` HTTP pattern
-- `lib/githubWorker.js` — restnoded worker at `shared/irule-versioner/github`
+- `lib/githubWorker.js` — restnoded worker at `shared/rulbased/github`
 - PAT auth: `Authorization: Bearer <token>` header
 - GitHub App auth: RS256 JWT generation via `crypto` module, installation access
   token exchange, token caching with expiry

@@ -6,8 +6,8 @@ var tmsh = require('./tmsh');
 var bigipClient = require('./bigipClient');
 var logger = require('./logger');
 
-var WORKER_URI_PATH = 'shared/iapp/processors/irule-versioner';
-var VERSION = '1.0.0';
+var WORKER_URI_PATH = 'shared/iapp/processors/rulbased';
+var VERSION = '2.0.0';
 
 /**
  * iApps LX Config Processor
@@ -35,7 +35,7 @@ ConfigProcessor.prototype.onPost = function (restOperation) {
   var inputProperties = blockUtil.getInputProperties(body);
 
   var dataDir = inputProperties.dataDirectory ||
-    '/var/config/rest/iapps/irule-versioner/data';
+    '/var/config/rest/iapps/rulbased/data';
   var pollInterval = inputProperties.pollIntervalSeconds !== undefined
     ? inputProperties.pollIntervalSeconds : 300;
 
@@ -99,7 +99,7 @@ ConfigProcessor.prototype.onPut = function (restOperation) {
   var pollInterval = inputProperties.pollIntervalSeconds !== undefined
     ? inputProperties.pollIntervalSeconds : 300;
   var dataDir = inputProperties.dataDirectory ||
-    '/var/config/rest/iapps/irule-versioner/data';
+    '/var/config/rest/iapps/rulbased/data';
 
   logger.info('ConfigProcessor.onPut: updating settings, pollInterval=' + pollInterval);
 

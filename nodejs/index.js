@@ -14,7 +14,8 @@
  * tries to instantiate a non-constructor export.
  *
  * Workers registered by this package:
- *   - lib/configProcessor.js  -> /mgmt/shared/iapp/processors/irule-versioner
- *   - lib/rulesWorker.js      -> /mgmt/shared/irule-versioner/rules
- *   - lib/settingsWorker.js   -> /mgmt/shared/irule-versioner/settings
+ *   - lib/configProcessor.js  -> /mgmt/shared/iapp/processors/rulbased
+ *   - lib/rulesWorker.js      -> /mgmt/shared/rulbased/rules
+ *   - lib/settingsWorker.js   -> /mgmt/shared/rulbased/settings
+ *   - lib/uiWorker.js         -> /mgmt/shared/rulbased/ui
  */
