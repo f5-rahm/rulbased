@@ -51,22 +51,68 @@ function init(dataDir, cb) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Test whether a rule is an F5-shipped system iRule.
+ *
+ * Two conditions must both hold:
+ *   1. name starts with "_sys_"   (F5 naming convention)
+ *   2. body's first non-whitespace token is "nodelete nowrite"
+ *      (the literal marker F5 embeds in apiAnonymous — TMOS strips this on
+ *      write, so user rules cannot legitimately contain it)
+ *
+ * Returns true for rules like _sys_https_redirect, _sys_auth_krbdelegate,
+ * etc.  Returns false for user rules that happen to start with _sys_ but
+ * lack the marker, and for F5 rules whose name has been changed away from
+ * the _sys_ prefix (both treated as operator-owned and therefore shown).
+ */
+function isSystemRule(name, content) {
+  if (!name || name.indexOf('_sys_') !== 0) { return false; }
+  if (!content) { return false; }
+  // Strip leading whitespace, take up to 32 chars, lowercase for match.
+  // F5's marker is "nodelete nowrite " as the literal first token.
+  var head = content.replace(/^\s+/, '').slice(0, 32).toLowerCase();
+  return head.indexOf('nodelete nowrite') === 0;
+}
+
+/**
  * Snapshot all iRules in the provided map. Only creates a new version entry
  * if no manifest exists yet for that rule (first-run baseline).
  *
  * @param {object}   rules    - map from tmsh.listAllRules
  * @param {string}   dataDir
+ * @param {object}   [opts]   - { skipSystem: true } to skip _sys_* F5 rules
  * @param {function} cb       - cb(err, count)
  */
-function baselineSnapshot(rules, dataDir, cb) {
+function baselineSnapshot(rules, dataDir, optsOrCb, maybeCb) {
+  // Back-compat: if called as baselineSnapshot(rules, dataDir, cb), no opts.
+  var opts, cb;
+  if (typeof optsOrCb === 'function') {
+    opts = {};
+    cb = optsOrCb;
+  } else {
+    opts = optsOrCb || {};
+    cb = maybeCb;
+  }
+  var skipSystem = !!opts.skipSystem;
+
   var ruleKeys = Object.keys(rules);
   var count = 0;
+  var skipped = 0;
   var idx = 0;
 
   function next() {
-    if (idx >= ruleKeys.length) { return cb(null, count); }
+    if (idx >= ruleKeys.length) {
+      if (skipped > 0) {
+        logger.info('baselineSnapshot: skipped ' + skipped + ' F5 system iRule(s)');
+      }
+      return cb(null, count);
+    }
     var rule = rules[ruleKeys[idx]];
     idx++;
+
+    if (skipSystem && isSystemRule(rule.name, rule.content)) {
+      skipped++;
+      return next();
+    }
 
     var manifestPath = _manifestPath(dataDir, rule.partition, rule.name);
     fs.access(manifestPath, fs.F_OK, function (err) {
@@ -935,6 +981,77 @@ function acknowledgeRule(dataDir, partition, name, cb) {
   });
 }
 
+/**
+ * Acknowledge every rule in the store that has at least one version and is
+ * not currently drifted.  Drifted rules are skipped — those need per-rule
+ * review.  Rules with zero versions are skipped (no baseline yet).
+ *
+ * @param {string}   dataDir
+ * @param {object}   liveRules  - map from bigipClient.listAllRules, used
+ *                                to compute drift vs the stored latestHash
+ * @param {function} cb         - cb(err, { acknowledged, skipped,
+ *                                skippedDrift, skippedNoVersions,
+ *                                alreadyAcknowledged })
+ */
+function acknowledgeAll(dataDir, liveRules, cb) {
+  _walkManifests(dataDir, function (walkErr, manifests) {
+    if (walkErr) { return cb(walkErr); }
+
+    var acknowledged = 0;
+    var alreadyAcknowledged = 0;
+    var skippedDrift = 0;
+    var skippedNoVersions = 0;
+    var i = 0;
+
+    function next() {
+      if (i >= manifests.length) {
+        return cb(null, {
+          acknowledged: acknowledged,
+          alreadyAcknowledged: alreadyAcknowledged,
+          skipped: skippedDrift + skippedNoVersions,
+          skippedDrift: skippedDrift,
+          skippedNoVersions: skippedNoVersions
+        });
+      }
+      var m = manifests[i];
+      i++;
+
+      if (!m.versions || m.versions.length === 0) {
+        skippedNoVersions++;
+        return next();
+      }
+      if (m.acknowledged === true) {
+        alreadyAcknowledged++;
+        return next();
+      }
+
+      // Drift check: compare live content hash to stored latest hash.
+      var key = '/' + m.partition + '/' + m.name;
+      var live = liveRules && liveRules[key];
+      var latest = m.versions[m.versions.length - 1];
+      if (live && latest) {
+        var liveHash = _shortHash(live.content);
+        if (liveHash !== latest.hash) {
+          skippedDrift++;
+          return next();
+        }
+      }
+
+      m.acknowledged = true;
+      _saveManifest(dataDir, m.partition, m.name, m, function (saveErr) {
+        if (saveErr) {
+          logger.warn('acknowledgeAll: save failed for ' + key + ': ' + saveErr.message);
+        } else {
+          acknowledged++;
+        }
+        next();
+      });
+    }
+
+    next();
+  });
+}
+
 module.exports = {
   init: init,
   baselineSnapshot: baselineSnapshot,
@@ -946,5 +1063,7 @@ module.exports = {
   exportArchive: exportArchive,
   importArchive: importArchive,
   checkImportConflicts: checkImportConflicts,
-  acknowledgeRule: acknowledgeRule
+  acknowledgeRule: acknowledgeRule,
+  acknowledgeAll: acknowledgeAll,
+  isSystemRule: isSystemRule
 };

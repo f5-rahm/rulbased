@@ -7,6 +7,55 @@ infrastructure.
 
 ---
 
+## What's new in 2.1
+
+- **Acknowledge all** — clear the `NEW` badge on every newly-baselined rule in
+  one action. Exposed as a clickable `New` stat on the dashboard and a toolbar
+  button in the left panel. Drifted rules are skipped server-side so that a
+  real external change never gets silently cleared. The whole bulk operation
+  emits a single audit-log entry.
+- **Hide F5 system iRules** — rules whose name starts with `_sys_` *and* whose
+  body begins with `nodelete nowrite` are filtered from the rule list, the
+  dashboard counters, and the poll worker by default. Toggle in **Settings →
+  Rule list**. The GUI shows `N F5 system iRules hidden` at the bottom of the
+  rule list when the filter is active. System rules never accumulate
+  `_sys_*.json` manifests on disk when the filter is on.
+- **Versions tab** — new tab alongside `History` that collapses the version
+  timeline by content hash. If a rule has been rolled back-and-redeployed
+  twenty times between two distinct versions, `Versions` shows two rows (one
+  per unique content hash, with an appearance count and last-deployed
+  timestamp) while `History` continues to show the full twenty-entry
+  append-only timeline. The `Deploy` button now lives on `Versions` — `Diff`
+  stays on `History`.
+- **Dark mode** — three-way theme setting (`Light` / `Dark` / `Auto`) in
+  **Settings → Appearance**. `Auto` follows `prefers-color-scheme` (standalone
+  tab) and the parent TMUI body class (embedded iframe). Default is `auto`.
+  Dark palette is applied via CSS variable overrides on top of CodeMirror's
+  bundled `cm-s-default` theme — the F5 red and jade-green brand colors used
+  for events and namespace commands are preserved across both themes.
+- **Expanded iRules syntax highlighting** — the overlay now colors all 93
+  top-level iRules commands from the F5 CloudDocs *Commands* page in F5 red
+  (`when`, `log`, `call`, `pool`, `node`, `snat`, `virtual`, `reject`, `drop`,
+  `forward`, `priority`, `timing`, `event`, `after`, `proc`, `return`,
+  `persist`, and 76 others), alongside the existing coverage for events and
+  namespaced commands. Names that collide with TCL keywords (`proc`, `return`,
+  `after`, `class`) now take the iRules color inside an iRule, which is how
+  iRule authors read them.
+- **Click-to-docs now requires Ctrl/Cmd** — CloudDocs navigation on linked
+  tokens was previously triggered by any click, which prevented placing the
+  text cursor inside a highlighted word. Plain clicks now place the cursor as
+  usual; hold **Ctrl** (or **Cmd** on macOS) and click to open the docs page.
+  Matches the "go-to-definition" gesture used by every mainstream IDE.
+- **History tab shows inline audit events** — acknowledge, remove-from-store,
+  and similar audit-only operations are now interleaved as narrow italic info
+  rows within the History timeline, so reading one rule's timeline no longer
+  requires cross-referencing a separate tab.
+- **Compare checkbox on History and Versions** — the two-version compare
+  selector is available from both tabs, so you can pick compare targets from
+  whichever view you're already reading.
+
+---
+
 ## Contents
 
 - [Features](#features)
@@ -97,6 +146,45 @@ infrastructure.
   migrations; v0→v1 orphaned blob sweep
 - **On-device backup directory** — backups saved to `/shared/rulbased-backups`
   (hardcoded; survives TMOS upgrades); RPM `%post` must create and chown to uid 198
+
+### Phase 7 — Package rename to Rülbased
+- RPM renamed from `irule-versioner` to `rulbased` — flag-day rebrand,
+  not an in-place upgrade from 1.x
+- Worker URIs moved under `/mgmt/shared/rulbased/`; old `/iapps/irule-versioner/`
+  paths no longer resolve
+- Data directory at `/var/config/rest/iapps/rulbased/data`
+- GUI served at `/mgmt/shared/rulbased/ui`
+
+### Phase 8 — UX improvements (v2.1)
+- **Acknowledge all** — `POST /rules/acknowledge-all` endpoint; clickable
+  dashboard stat + left-panel toolbar button; drifted rules skipped; one
+  audit entry for the whole bulk operation
+- **Hide F5 system iRules** — `hideSystemRules` setting (default on); detection
+  via `_sys_*` name prefix plus `nodelete nowrite` body marker; filters list,
+  dashboard counts, and poll-worker manifest creation
+- **Versions tab** — client-side aggregation by blob content hash;
+  `Deploy` moves here from `History`; `Diff` stays on `History`; two-version
+  Compare checkbox available on both `History` and `Versions`
+- **Dark mode** — three-way `theme` setting (light / dark / auto); `auto`
+  tracks OS `prefers-color-scheme` and the parent TMUI frame; dark palette
+  applied via `body.iv-dark .cm-s-default .cm-*` overrides so the bundled
+  CodeMirror default theme remains in use and brand colors (F5 red, jade
+  green) are preserved across both modes
+- **Top-level iRules command highlighting** — 93 commands from the CloudDocs
+  *Commands* page (`when`, `log`, `call`, `pool`, `node`, `snat`, `virtual`,
+  `reject`, `drop`, `forward`, `priority`, `timing`, `event`, `after`, `proc`,
+  `return`, `persist`, …) color in F5 red via the existing `cm-irule-kw`
+  class, consistent with events and namespace prefixes. Overlay branch runs
+  before the TCL check so names that are also TCL keywords (`proc`, `return`,
+  `after`, `class`) render in the iRules color inside an iRule
+- **Ctrl+click for CloudDocs** — plain click now places the cursor in the
+  word; hold **Ctrl** (or **Cmd** on macOS) to open the CloudDocs page for
+  the clicked event, namespace command, top-level command, or TCL command
+- **Inline audit events in History** — `acknowledge` and
+  `remove-from-store` audit entries are merged into the History timeline as
+  narrow italic info rows (client-side merge from a parallel `GET
+  /rules/audit` fetch, 2-second dedupe window to avoid double-counting when
+  a content-change audit entry is paired with a status-change audit entry)
 
 ---
 

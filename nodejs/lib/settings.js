@@ -31,6 +31,8 @@ var _defaults = {
   tclManPageLinks: true,
   debugMode: false,
   dashboardAuditLimit: 15,
+  hideSystemRules: true,
+  theme: 'auto',
   schemaVersion: 0
 };
 
@@ -49,6 +51,12 @@ function update(values) {
   Object.keys(values).forEach(function (k) {
     if (allowed.indexOf(k) === -1) {
       throw new Error('Unknown setting: ' + k);
+    }
+    if (k === 'theme') {
+      var t = values[k];
+      if (t !== 'light' && t !== 'dark' && t !== 'auto') {
+        throw new Error('theme must be one of: light, dark, auto');
+      }
     }
     _current[k] = values[k];
   });

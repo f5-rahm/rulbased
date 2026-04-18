@@ -4,6 +4,7 @@ var bigipClient = require('./bigipClient');
 var tmsh = require('./tmsh');  // retained for future write operations in poll
 var versionStore = require('./versionStore');
 var notifier = require('./notifier');
+var settings = require('./settings');
 var logger = require('./logger');
 
 /**
@@ -71,6 +72,13 @@ function _poll() {
 
       var rule = liveRules[ruleKeys[idx]];
       idx++;
+
+      // Skip F5 system rules when the setting is on, so we don't accumulate
+      // _sys_*.json manifests on disk.  Per PLANNING.md §Phase 8 Feature 2.
+      var hideSys = settings.getAll().hideSystemRules !== false;
+      if (hideSys && versionStore.isSystemRule(rule.name, rule.content)) {
+        return next();
+      }
 
       versionStore.getManifest(_dataDir, rule.partition, rule.name, function (manifestErr, manifest) {
         if (manifestErr) {

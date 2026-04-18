@@ -36,6 +36,7 @@ var _deployLock = {};
  *   POST /rules/:partition/:name/deploy          - deploy { hash, reason, author }
  *   PUT  /rules/:partition/:name/retention       - update retention policy
  *   PUT  /rules/:partition/:name/acknowledge     - mark rule as acknowledged (clears NEW badge)
+ *   POST /rules/acknowledge-all                  - bulk acknowledge all non-drifted rules (Phase 8)
  *   POST /rules/export                           - export data dir as tar.gz
  *   POST /rules/import                           - import tar.gz (base64 JSON)
  *   POST /rules/import/check                     - check for conflicts before import
@@ -116,11 +117,13 @@ RulesWorker.prototype.onStart = function (success) {
           }
           var ruleCount = Object.keys(liveRules).length;
           self.logger.info('[Rülbased] RulesWorker.onStart: got ' + ruleCount + ' rules, snapshotting');
-          versionStore.baselineSnapshot(liveRules, dataDir, function (snapErr, count) {
+          var skipSystem = settings.getAll().hideSystemRules !== false;
+          versionStore.baselineSnapshot(liveRules, dataDir, { skipSystem: skipSystem }, function (snapErr, count) {
             if (snapErr) {
               self.logger.severe('[Rülbased] RulesWorker.onStart: baseline failed: ' + snapErr.message);
             } else {
-              self.logger.info('[Rülbased] RulesWorker.onStart: baseline complete, ' + count + ' rules snapshotted');
+              self.logger.info('[Rülbased] RulesWorker.onStart: baseline complete, ' + count + ' rules snapshotted' +
+                (skipSystem ? ' (F5 system rules excluded)' : ''));
             }
             _startPollWorker(self, dataDir);
             return success();
@@ -233,6 +236,11 @@ RulesWorker.prototype.onPost = function (restOperation) {
     return _exportData(dataDir, restOperation);
   }
 
+  // POST /rules/acknowledge-all — bulk-acknowledge every non-drifted rule
+  if (segments.length === 1 && segments[0] === 'acknowledge-all') {
+    return _acknowledgeAll(dataDir, body, restOperation);
+  }
+
   // POST /rules/import/check  — must be tested before /import
   if (segments.length === 2 && segments[0] === 'import' && segments[1] === 'check') {
     return _importCheck(dataDir, body, restOperation);
@@ -311,8 +319,24 @@ function _listRules(dataDir, restOperation) {
       if (storeErr) {
         return _error(restOperation, 500, 'store read failed: ' + storeErr.message);
       }
+      var hideSys = settings.getAll().hideSystemRules !== false;
+      var hiddenCount = 0;
+      var filtered = ruleList;
+      if (hideSys) {
+        filtered = [];
+        for (var i = 0; i < ruleList.length; i++) {
+          var r = ruleList[i];
+          var live = liveRules[r.fullPath];
+          var content = live ? live.content : '';
+          if (versionStore.isSystemRule(r.name, content)) {
+            hiddenCount++;
+          } else {
+            filtered.push(r);
+          }
+        }
+      }
       restOperation.setStatusCode(200);
-      restOperation.setBody({ items: ruleList });
+      restOperation.setBody({ items: filtered, systemRulesHidden: hiddenCount });
       restOperation.complete();
     });
   });
@@ -805,6 +829,49 @@ function _acknowledgeRule(dataDir, partition, name, restOperation) {
     restOperation.setStatusCode(200);
     restOperation.setBody({ ok: true, acknowledged: true });
     restOperation.complete();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Acknowledge all (bulk clear "new" state)
+// ---------------------------------------------------------------------------
+
+function _acknowledgeAll(dataDir, body, restOperation) {
+  var author = (body && body.author) || 'unknown';
+
+  bigipClient.listAllRules(function (listErr, liveRules) {
+    if (listErr) {
+      // Don't hard-fail — acknowledge without drift detection.  Worst case,
+      // a drifted rule gets acknowledged and the operator sees it turn back
+      // to NEW on the next poll, which is safe.
+      logger.warn('_acknowledgeAll: listAllRules failed, proceeding without drift check: ' + listErr.message);
+      liveRules = {};
+    }
+
+    versionStore.acknowledgeAll(dataDir, liveRules, function (ackErr, report) {
+      if (ackErr) {
+        return _error(restOperation, 500, 'acknowledge-all failed: ' + ackErr.message);
+      }
+
+      // Single audit entry for the whole operation (per PLANNING.md §Phase 8)
+      if (report.acknowledged > 0) {
+        var auditEntry = {
+          ts: new Date().toISOString(),
+          author: author,
+          action: 'acknowledge-all',
+          rule: null,
+          reason: 'Bulk acknowledged ' + report.acknowledged + ' rule(s); ' +
+            'skipped ' + report.skippedDrift + ' drifted, ' +
+            report.skippedNoVersions + ' without versions'
+        };
+        versionStore.appendAudit(dataDir, auditEntry, function () {});
+      }
+
+      logger.info('_acknowledgeAll: ' + JSON.stringify(report));
+      restOperation.setStatusCode(200);
+      restOperation.setBody({ ok: true, report: report });
+      restOperation.complete();
+    });
   });
 }
 

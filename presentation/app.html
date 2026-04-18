@@ -614,8 +614,8 @@ span.CodeMirror-selectedtext { background: none; }
       padding: 12px 16px 8px; display: flex; flex-direction: column; gap: 8px; }
     #history-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     #history-controls .spacer { flex: 1; }
-    #btn-compare { background: var(--accent); color: #fff; }
-    #btn-compare:disabled { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+    #btn-compare, #btn-compare-v { background: var(--accent); color: #fff; }
+    #btn-compare:disabled, #btn-compare-v:disabled { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
     #version-list { display: flex; flex-direction: column; gap: 3px; }
     /* Resize handle between version list and diff */
     #history-resize { flex: 0 0 5px; background: var(--border); cursor: row-resize;
@@ -642,6 +642,51 @@ span.CodeMirror-selectedtext { background: none; }
     .btn-view   { background: var(--bg); color: var(--text-sub); border: 1px solid var(--border); font-size: 11px; padding: 3px 9px; }
     .btn-deploy-v { background: var(--success-bg); color: var(--success); border: 1px solid var(--success); font-size: 11px; padding: 3px 9px; }
     .btn-deploy-v:hover { background: var(--success); color: #fff; }
+
+    /* Phase 8b Path Z: narrow info-bar rows for audit-only events
+       (acknowledge / remove-from-store) inlined into the History timeline.
+       Visually distinct from content rows: no border, smaller padding,
+       italicised text, muted color; no checkbox or action buttons. */
+    .v-row.v-row-action {
+      background: transparent;
+      border: none;
+      border-left: 2px solid var(--border);
+      border-radius: 0;
+      margin-left: 6px;
+      padding: 4px 10px;
+      opacity: 0.85;
+    }
+    .v-row.v-row-action:hover { opacity: 1; }
+    .v-row.v-row-action .v-info { color: var(--text-muted); }
+    .v-row.v-row-action .v-msg  { font-weight: normal; font-style: italic; }
+    .v-action-icon {
+      color: var(--text-muted);
+      font-size: 9px;
+      flex: 0 0 auto;
+      margin-top: 6px;
+      margin-left: -2px;
+    }
+
+    /* =======================================================================
+       Versions tab — deduplicated view over manifest.versions[] keyed by blobFile
+    ======================================================================= */
+    #versions-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+      padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+    #versions-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #versions-controls .spacer { flex: 1; }
+    #versions-list { display: flex; flex-direction: column; gap: 3px; }
+    .vd-count-pill { background: var(--accent-light); color: var(--accent);
+      font-family: monospace; font-weight: 600; font-size: 10px;
+      padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+
+    /* =======================================================================
+       Dashboard — make the "New" stat clickable when N > 0
+    ======================================================================= */
+    .db-stat.db-stat-clickable { cursor: pointer; transition: background 0.15s; }
+    .db-stat.db-stat-clickable:hover { background: var(--bg-row-hover); border-radius: var(--radius); }
+    .db-stat.db-stat-clickable .db-stat-val { text-decoration: underline dotted;
+      text-decoration-color: var(--text-muted); text-underline-offset: 3px; }
+    .db-stat.db-stat-clickable:hover .db-stat-val { text-decoration-color: var(--accent); }
 
     /* Diff section (inline in history) */
     #diff-sec { flex: 1 1 0; min-height: 0; display: none; flex-direction: column;
@@ -808,6 +853,54 @@ span.CodeMirror-selectedtext { background: none; }
     span.cm-irule-cmd { color: #009639 !important; font-weight: 600; }
     body.iv-dark span.cm-irule-kw  { color: #ff4d6d !important; }
     body.iv-dark span.cm-irule-cmd { color: #00c94a !important; }
+    /* Phase 8c: full dark-mode palette applied on the cm-s-default stylesheet.
+       Rather than swap CodeMirror to material-darker (whose CSS isn't bundled),
+       we override the default theme's token colors under body.iv-dark.  This
+       keeps a single source of truth for CM theming and avoids the "theme
+       swap drops TCL highlighting" bug.  Background is unified with the left
+       sidebar (--bg-panel = #1f2937) for a flat, cohesive look; the gutter is
+       a shade darker for subtle visual separation. */
+    body.iv-dark .CodeMirror,
+    body.iv-dark .CodeMirror.cm-s-default {
+      background: #1f2937 !important;
+      color: #d4d4d4 !important;
+    }
+    body.iv-dark .CodeMirror-gutters {
+      background: #1a2332 !important;
+      border-right: 1px solid #2a3444 !important;
+      color: #6b7280 !important;
+    }
+    body.iv-dark .CodeMirror-linenumber { color: #6b7280 !important; }
+    body.iv-dark .CodeMirror-cursor { border-left-color: #e5e7eb !important; }
+    body.iv-dark .CodeMirror-selected { background: #334155 !important; }
+    body.iv-dark .CodeMirror-focused .CodeMirror-selected { background: #3b4a63 !important; }
+    body.iv-dark .CodeMirror-line::selection,
+    body.iv-dark .CodeMirror-line > span::selection,
+    body.iv-dark .CodeMirror-line > span > span::selection { background: #3b4a63 !important; }
+    body.iv-dark .CodeMirror-activeline-background { background: #273242 !important; }
+    body.iv-dark .CodeMirror-matchingbracket { color: #82aaff !important; background: #264f78 !important; }
+    /* Base TCL mode tokens — remapped for dark mode.  Palette inspired by
+       material-darker but tuned for the #1f2937 background.  !important is
+       required to override the .cm-s-default rules earlier in this file. */
+    body.iv-dark .cm-s-default .cm-keyword   { color: #c792ea !important; } /* proc, if, set, foreach */
+    body.iv-dark .cm-s-default .cm-variable-2{ color: #82aaff !important; } /* $foo variables */
+    body.iv-dark .cm-s-default .cm-atom      { color: #f78c6c !important; } /* literals */
+    body.iv-dark .cm-s-default .cm-number    { color: #f78c6c !important; } /* 42, 3.14 */
+    body.iv-dark .cm-s-default .cm-def       { color: #82aaff !important; } /* definitions */
+    body.iv-dark .cm-s-default .cm-string    { color: #ecc48d !important; } /* "foo" */
+    body.iv-dark .cm-s-default .cm-string-2  { color: #ecc48d !important; }
+    body.iv-dark .cm-s-default .cm-comment   { color: #697098 !important; font-style: italic; } /* # comments */
+    body.iv-dark .cm-s-default .cm-builtin   { color: #c792ea !important; }
+    body.iv-dark .cm-s-default .cm-meta      { color: #c2c2b0 !important; }
+    body.iv-dark .cm-s-default .cm-qualifier { color: #c2c2b0 !important; }
+    body.iv-dark .cm-s-default .cm-bracket   { color: #d4d4d4 !important; }
+    body.iv-dark .cm-s-default .cm-tag       { color: #f07178 !important; }
+    body.iv-dark .cm-s-default .cm-attribute { color: #ffcb6b !important; }
+    body.iv-dark .cm-s-default .cm-header    { color: #82aaff !important; }
+    body.iv-dark .cm-s-default .cm-quote     { color: #7fdbca !important; }
+    body.iv-dark .cm-s-default .cm-variable-3,
+    body.iv-dark .cm-s-default .cm-type      { color: #7fdbca !important; }
+    body.iv-dark .cm-s-default .cm-error     { color: #ff5370 !important; background: #3b1010 !important; }
     /* Standard TCL commands — underline shown when tclManPageLinks is on */
     body.irv-tcl-links .cm-tcl-cmd {
       cursor: pointer;
@@ -932,10 +1025,12 @@ span.CodeMirror-selectedtext { background: none; }
             <option value="flat">Flat</option>
             <option value="partition">Partition</option>
           </select>
+          <button id="btn-ack-all" title="Mark all non-drifted rules as reviewed (clears the NEW badge on rules with baseline snapshots)" style="font-size:11px;padding:2px 8px;white-space:nowrap;display:none">&#10003; Ack all</button>
           <button id="btn-create-rule" title="Create a new iRule" style="font-size:11px;padding:2px 8px;white-space:nowrap;margin-left:auto">+ New</button>
         </div>
       </div>
       <div id="rule-list"><div class="loading-row">Loading…</div></div>
+      <div id="list-footer-hint" style="display:none;font-size:10px;color:var(--text-muted);padding:4px 10px;border-top:1px solid var(--border);text-align:center"></div>
     </div>
 
     <!-- Right: detail -->
@@ -968,7 +1063,7 @@ span.CodeMirror-selectedtext { background: none; }
               <li><strong>Built-in audit log</strong> — append-only record of every deploy, rollback, snapshot, drift detection, import, and deletion</li>
             </ul>
             <div class="db-intro-meta">
-              <span class="db-version-pill">v2.0.0</span>
+              <span class="db-version-pill">v2.1.0</span>
             </div>
           </div>
 
@@ -984,7 +1079,7 @@ span.CodeMirror-selectedtext { background: none; }
                 <div class="db-stat-val db-stat-drift" id="db-s-drift">—</div>
                 <div class="db-stat-lbl">Drifted</div>
               </div>
-              <div class="db-stat" title="Rules present on the BIG-IP that have no version history yet — will be baselined on next poll">
+              <div class="db-stat" id="db-stat-new" title="Rules present on the BIG-IP that have no version history yet — will be baselined on next poll">
                 <div class="db-stat-val" id="db-s-unversioned">—</div>
                 <div class="db-stat-lbl">New</div>
               </div>
@@ -1005,6 +1100,15 @@ span.CodeMirror-selectedtext { background: none; }
           <div class="db-card db-changelog">
             <div class="db-card-title">Changelog</div>
             <div class="db-cl-list">
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v2.1.0</div>
+                <ul class="db-cl-items">
+                  <li>Acknowledge all — dashboard New stat is now a clickable button; matching toolbar button in the left panel; skips drifted rules and rules without a baseline; single audit entry per bulk operation</li>
+                  <li>Hide F5 system iRules — rules named <code>_sys_*</code> whose body starts with <code>nodelete nowrite</code> are filtered from the list, dashboard counts, and poll worker by default; toggle in Settings → Rule list</li>
+                  <li>Versions tab — new tab alongside History that deduplicates the version list by content hash; Deploy button lives here; Diff stays in History</li>
+                  <li>Dark mode — three-way theme toggle (Light / Dark / Auto) in Settings → Appearance; Auto follows OS <code>prefers-color-scheme</code> and the parent TMUI theme when embedded</li>
+                </ul>
+              </div>
               <div class="db-cl-entry">
                 <div class="db-cl-ver">v2.0.0</div>
                 <ul class="db-cl-items">
@@ -1046,7 +1150,7 @@ span.CodeMirror-selectedtext { background: none; }
                 <div class="db-cl-ver">v0.3.0</div>
                 <ul class="db-cl-items">
                   <li>iRules-aware syntax highlighting overlay (events in F5 red, namespace commands in jade green)</li>
-                  <li>Click-to-docs on iRules events, namespace commands, and standard TCL commands</li>
+                  <li>Ctrl+click (Cmd+click on Mac) on iRules events, namespace commands, top-level commands, and TCL commands opens CloudDocs/tcl-lang docs</li>
                   <li>Independent toggles for iRules links and TCL man page links</li>
                   <li>Debug logging toggle; settings loaded on page startup</li>
                 </ul>
@@ -1092,6 +1196,7 @@ span.CodeMirror-selectedtext { background: none; }
       <div id="tabs">
         <button class="tab-btn active" data-tab="overview">Overview</button>
         <button class="tab-btn" data-tab="history">History</button>
+        <button class="tab-btn" data-tab="versions">Versions</button>
         <button class="tab-btn" data-tab="audit">Audit</button>
       </div>
 
@@ -1148,6 +1253,19 @@ span.CodeMirror-selectedtext { background: none; }
         </div>
       </div>
 
+      <!-- Versions — deduplicated by content hash -->
+      <div class="tab-panel" id="tab-versions">
+        <div id="versions-panel">
+          <div id="versions-controls">
+            <span id="v-count" style="font-size:11px;color:var(--text-muted)"></span>
+            <button id="btn-compare-v" disabled style="margin-left:8px">&#8660; Compare</button>
+            <div class="spacer"></div>
+            <span style="font-size:11px;color:var(--text-muted)">Unique content hashes — each appears once regardless of how many times it was deployed.</span>
+          </div>
+          <div id="versions-list"><div class="loading-row">Select a rule to see its distinct versions.</div></div>
+        </div>
+      </div>
+
       <!-- Audit -->
       <div class="tab-panel" id="tab-audit">
         <div id="audit-panel">
@@ -1177,6 +1295,31 @@ span.CodeMirror-selectedtext { background: none; }
       <button id="btn-sclose">✕</button>
     </div>
     <div id="settings-body">
+      <div class="s-section">
+        <h3>Appearance</h3>
+        <div class="s-row">
+          <label for="s-theme">Theme</label>
+          <select id="s-theme">
+            <option value="auto">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Auto follows your OS setting (or the BIG-IP TMUI theme when embedded).
+        </div>
+      </div>
+      <div class="s-section">
+        <h3>Rule list</h3>
+        <div class="s-row">
+          <label for="s-hidesys">Hide F5 system iRules</label>
+          <input id="s-hidesys" type="checkbox">
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Hides rules whose name starts with <code>_sys_</code> and whose body starts with <code>nodelete nowrite</code>
+          (F5-shipped system iRules). Affects the rule list, dashboard counters, and poll-worker manifest creation.
+        </div>
+      </div>
       <div class="s-section">
         <h3>Change Detection</h3>
         <div class="s-row">
@@ -1302,6 +1445,29 @@ span.CodeMirror-selectedtext { background: none; }
     <div class="modal-ftr">
       <button id="btn-remove-cancel" style="background:var(--bg);border:1px solid var(--border)">Cancel</button>
       <button id="btn-remove-confirm" style="background:#E4002B;color:#fff">Delete history</button>
+    </div>
+  </div>
+</div>
+
+<div id="ackall-overlay" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:460px">
+    <div class="modal-hdr">
+      <span class="modal-hdr-title">Acknowledge all new rules</span>
+      <button class="modal-x" id="btn-ackall-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p>Mark <strong id="ackall-count">0</strong> rule<span id="ackall-plural">s</span>
+         as reviewed?</p>
+      <p style="font-size:12px;color:var(--text-muted)">
+        Only rules with a baseline snapshot and no drift will be acknowledged.
+        Drifted rules are <strong>skipped</strong> — acknowledging them here
+        would lose track of the external change. A single audit-log entry is
+        written for the whole bulk operation.
+      </p>
+    </div>
+    <div class="modal-ftr">
+      <button id="btn-ackall-cancel" style="background:var(--bg);border:1px solid var(--border)">Cancel</button>
+      <button id="btn-ackall-confirm" style="background:var(--accent);color:#fff">Acknowledge all</button>
     </div>
   </div>
 </div>
@@ -1814,6 +1980,36 @@ var _IRULE_NS_SET = (function () {
   return s;
 }());
 
+/* Top-level iRules commands — those without a namespace prefix, from the F5
+   CloudDocs Commands page. Includes iRule declaration/flow keywords (when,
+   timing, priority, event, after, proc, call, return), logging (log), and
+   bare action verbs (pool, node, snat, virtual, reject, drop, forward, etc.).
+   These are visible to TMOS as top-level verbs in an iRule body but are NOT
+   TCL commands, so the base TCL mode doesn't color them — our overlay does. */
+var IRULE_TOP_CMDS = [
+  'accumulate', 'active_members', 'active_nodes', 'after', 'b64decode', 'b64encode',
+  'call', 'class', 'client_addr', 'client_port', 'clientside', 'clone',
+  'cpu', 'crc32', 'decode_uri', 'discard', 'domain', 'drop',
+  'event', 'fasthash', 'findclass', 'findstr', 'forward', 'getfield',
+  'htonl', 'htons', 'http_cookie', 'http_header', 'http_host', 'http_method',
+  'http_uri', 'http_version', 'ifile', 'imid', 'ip_addr', 'ip_protocol',
+  'ip_tos', 'ip_ttl', 'lasthop', 'link_qos', 'listen', 'llookup',
+  'local_addr', 'log', 'matchclass', 'matchregion', 'md5', 'members',
+  'nexthop', 'node', 'nodes', 'ntohl', 'ntohs', 'peer',
+  'pem_dtos', 'persist', 'pool', 'pools', 'priority', 'proc',
+  'radius_authenticate', 'rateclass', 'redirect', 'reject', 'relate_client', 'relate_server',
+  'remote_addr', 'return', 'rmd160', 'server_addr', 'server_port', 'serverside',
+  'session', 'sha1', 'sha256', 'sha384', 'sha512', 'sharedvar',
+  'snat', 'snatpool', 'substr', 'table', 'tcl_platform', 'timing',
+  'traffic_group', 'translate', 'urlcatblindquery', 'urlcatquery', 'use', 'virtual',
+  'vlan_id', 'when', 'whereis'
+];
+var _IRULE_TOP_SET = (function () {
+  var s = {};
+  for (var i = 0; i < IRULE_TOP_CMDS.length; i++) { s[IRULE_TOP_CMDS[i]] = true; }
+  return s;
+}());
+
 /* Standard TCL commands that get man-page links when tclManPageLinks is on.
    Source: https://www.tcl-lang.org/man/tcl8.4/TclCmd/contents.htm */
 var TCL_COMMANDS = [
@@ -1887,6 +2083,12 @@ function _makeIrulesOverlay() {
       /* Namespace prefix — peek to confirm :: follows */
       if (_IRULE_NS_SET[word] && stream.match('::', false)) { return 'irule-kw'; }
 
+      /* Top-level iRules command (when, log, pool, proc, return, call, etc.)
+         Checked before the TCL branch so that commands which are ALSO TCL
+         keywords (proc, return, after, class) get the F5-red iRules color
+         instead of TCL-keyword coloring when rendered inside an iRule. */
+      if (_IRULE_TOP_SET[word]) { return 'irule-kw'; }
+
       /* Standard TCL command — always emit token class; CSS body class controls visibility */
       if (_TCL_CMD_SET[word]) { return 'tcl-cmd'; }
 
@@ -1924,6 +2126,12 @@ function _getCloudDocsUrl(cm, pos) {
     return 'https://clouddocs.f5.com/api/irules/' + expr + '.html';
   }
 
+  /* Top-level iRules commands resolve to the same style of URL as events —
+     one page per command at https://clouddocs.f5.com/api/irules/<cmd>.html */
+  if (S.settings.iruleLinks && _IRULE_TOP_SET[expr]) {
+    return 'https://clouddocs.f5.com/api/irules/' + expr + '.html';
+  }
+
   if (S.settings.tclManPageLinks && _TCL_CMD_SET[expr]) {
     return 'https://www.tcl-lang.org/man/tcl8.4/TclCmd/' + expr + '.htm';
   }
@@ -1953,11 +2161,19 @@ function _attachIrulesFeatures(cm, isEditor) {
   cm._irulesClickHandler = function (e) {
     if (!cm.getWrapperElement().contains(e.target)) { return; }
 
+    /* Phase 8d: only open CloudDocs when a modifier key is held.  Without
+       this, every click on a linked token would navigate and you couldn't
+       place the cursor within that word.  Ctrl on Windows/Linux, Cmd on
+       macOS — matches the "go to definition" gesture in every IDE.  We do
+       NOT preventDefault here; letting the event fall through lets CM
+       handle it normally to place the cursor. */
+    if (!e.ctrlKey && !e.metaKey) { return; }
+
     var coords = cm.coordsChar({ left: e.pageX, top: e.pageY }, 'page');
     var url    = _getCloudDocsUrl(cm, coords);
 
     if (S.settings.debugMode) {
-      console.log('[iRV] mousedown target=' + e.target.tagName +
+      console.log('[iRV] ctrl-click target=' + e.target.tagName +
                   ' class="' + (e.target.className || '') + '"' +
                   ' line=' + coords.line + ' ch=' + coords.ch +
                   ' url=' + url);
@@ -1979,6 +2195,7 @@ var S = {
   rules:      [],   // items from GET /rules
   rule:       null, // currently selected rule object
   versions:   [],   // versions for selected rule (newest-first)
+  timeline:   [],   // Phase 8b: merged content+audit timeline for History tab
   checked:    [],   // up to 2 hashes selected for compare
   auditOff:   0,
   auditTotal: 0,
@@ -1992,25 +2209,66 @@ var S = {
 };
 
 /* --------------------------------------------------------------------------
-   Theme
+   Theme — three-way: 'light' | 'dark' | 'auto' (from S.settings.theme)
+
+   'auto' resolution order (first truthy wins):
+     1. parent TMUI frame signals dark (body.dark-mode/.theme-dark/[data-theme=dark])
+     2. window.matchMedia('(prefers-color-scheme: dark)')
+     3. light
+
+   The parent-frame check is best-effort and cross-origin-safe (try/catch).
+   When Rulbased runs standalone (new tab), only matchMedia applies.
 -------------------------------------------------------------------------- */
-function applyTheme() {
-  var dark = false;
+function _resolveDark() {
+  var pref = (S.settings && S.settings.theme) || 'auto';
+  if (pref === 'dark')  { return true; }
+  if (pref === 'light') { return false; }
+  // auto
   try {
     var pb = window.parent.document.body;
-    dark = pb.classList.contains('dark-mode') ||
-           pb.classList.contains('theme-dark') ||
-           pb.getAttribute('data-theme') === 'dark';
-  } catch (e) {}
+    if (pb.classList.contains('dark-mode') ||
+        pb.classList.contains('theme-dark') ||
+        pb.getAttribute('data-theme') === 'dark') {
+      return true;
+    }
+  } catch (e) { /* cross-origin or no parent */ }
+  try {
+    if (window.matchMedia &&
+        window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      return true;
+    }
+  } catch (e) { /* old browser */ }
+  return false;
+}
+
+function applyTheme() {
+  var dark = _resolveDark();
   document.body.classList.toggle('iv-dark', dark);
-  if (S.editor)   { S.editor.refresh(); }
-  if (S.viewerCM) { S.viewerCM.refresh(); }
+  // Phase 8c: we intentionally do NOT swap the CodeMirror theme option.
+  // Only cm-s-default is bundled in this file — switching to cm-s-material-darker
+  // leaves the base TCL tokens (keyword, variable-2, string, etc.) with no
+  // color source and they collapse to the body's plain text color.  Instead,
+  // body.iv-dark .cm-s-default .cm-* rules remap every token for dark mode.
+  // All CM instances still need a refresh so existing rendered tokens pick up
+  // the new CSS-variable values for background, gutter, cursor, etc.
+  if (S.editor   && S.editor.refresh)   { S.editor.refresh(); }
+  if (S.viewerCM && S.viewerCM.refresh) { S.viewerCM.refresh(); }
 }
 
 function watchTheme() {
+  // Watch the parent TMUI body for class/attr changes (for 'auto' mode).
   try {
     var obs = new MutationObserver(applyTheme);
     obs.observe(window.parent.document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+  } catch (e) {}
+  // Watch the OS prefers-color-scheme media query (for 'auto' mode, standalone tab).
+  try {
+    if (window.matchMedia) {
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      // Modern browsers: addEventListener; fallback: addListener (deprecated but works in older Chrome/Safari).
+      if (mq.addEventListener) { mq.addEventListener('change', applyTheme); }
+      else if (mq.addListener) { mq.addListener(applyTheme); }
+    }
   } catch (e) {}
 }
 
@@ -2085,6 +2343,38 @@ function loadRuleList() {
     var drifted = S.rules.filter(function (r) { return r.drifted; }).length;
     document.getElementById('s-tracked').textContent = S.rules.length;
     document.getElementById('s-drift').textContent   = drifted;
+
+    // Footer hint: "N F5 system iRules hidden" when hideSystemRules is on
+    var hint = document.getElementById('list-footer-hint');
+    if (hint) {
+      var hidden = data.systemRulesHidden || 0;
+      if (hidden > 0) {
+        hint.textContent = hidden + ' F5 system iRule' + (hidden === 1 ? '' : 's') + ' hidden';
+        hint.style.display = 'block';
+      } else {
+        hint.style.display = 'none';
+      }
+    }
+
+    // Show "Ack all" button when there are non-drifted rules with baselines that
+    // are not yet acknowledged.
+    var ackable = 0;
+    for (var i = 0; i < S.rules.length; i++) {
+      var r = S.rules[i];
+      if (r.onSystem && r.inVersionStore && !r.acknowledged && !r.drifted) {
+        ackable++;
+      }
+    }
+    var ackBtn = document.getElementById('btn-ack-all');
+    if (ackBtn) {
+      if (ackable > 0) {
+        ackBtn.textContent = '\u2713 Ack all (' + ackable + ')';
+        ackBtn.style.display = 'inline-block';
+      } else {
+        ackBtn.style.display = 'none';
+      }
+    }
+
     renderList();
     // Refresh dashboard health stats if on dashboard
     if (S.view === 'dashboard') { renderDashboardHealth(); }
@@ -2152,6 +2442,7 @@ function selectRule(r) {
   S.editMode  = false;
   S.checked   = [];
   S.versions  = [];
+  S.timeline  = [];
 
   renderList();
 
@@ -2186,8 +2477,9 @@ function activateTab(name) {
   document.querySelectorAll('.tab-panel').forEach(function (p) {
     p.classList.toggle('active', p.id === 'tab-' + name);
   });
-  if (name === 'history' && S.rule) { loadHistory(); }
-  if (name === 'audit'   && S.rule) { loadAudit(0); }
+  if (name === 'history'  && S.rule) { loadHistory(); }
+  if (name === 'versions' && S.rule) { loadVersionsTab(); }
+  if (name === 'audit'    && S.rule) { loadAudit(0); }
 }
 
 /* --------------------------------------------------------------------------
@@ -2281,6 +2573,212 @@ function loadHistory() {
   el.innerHTML = '<div class="loading-row">Loading…</div>';
   hideDiff();
 
+  // Phase 8b — Path Z: load both the content-version list and the per-rule
+  // audit log in parallel, then merge into S.timeline.  Content versions
+  // remain the primary data (they carry blob references and are what Compare
+  // operates on); audit entries that don't correspond to a content event
+  // (acknowledge, acknowledge-all, remove-from-store) get inlined as narrow
+  // info rows in timestamp order.
+  var versionsDone = false, auditDone = false;
+  var versionsData = null, auditData = null;
+  var versionsErr  = null;
+
+  function _maybeRender() {
+    if (!versionsDone || !auditDone) { return; }
+    if (versionsErr) {
+      if (String(versionsErr).indexOf('404') !== -1) {
+        el.innerHTML = '<div class="loading-row">No version history yet — this rule has not been tracked.</div>';
+      } else {
+        el.innerHTML = '<div class="error-row">Failed: ' + esc(versionsErr) + '</div>';
+      }
+      return;
+    }
+    S.versions = (versionsData.versions || []).slice().reverse();
+    S.timeline = _buildTimeline(S.versions, (auditData && auditData.items) || []);
+    renderVersionList();
+  }
+
+  GET('/rules/' + rp(S.rule) + '/versions', function (err, data) {
+    versionsErr  = err;
+    versionsData = data;
+    versionsDone = true;
+    _maybeRender();
+  });
+
+  // Audit fetch failure is non-fatal — if it fails we just render History
+  // without the action-only rows.  Pull a generous window; action events are
+  // rare compared to content events.
+  GET('/rules/audit?rule=' + encodeURIComponent(S.rule.fullPath) + '&limit=200', function (err, data) {
+    if (err) { /* non-fatal — no action rows */ }
+    auditData = data;
+    auditDone = true;
+    _maybeRender();
+  });
+}
+
+/* Merge content versions and audit actions into a single timeline sorted
+   newest-first.  Rules:
+   - Content versions are kept as-is with kind='content'.
+   - Audit actions that have a matching content version (same rule + timestamp
+     within 2 s + action produces content: deploy/rollback/snapshot/baseline/
+     external-change-detected/github-pull/github-push) are dropped — they'd
+     duplicate the content row.
+   - Remaining audit entries (acknowledge, acknowledge-all, remove-from-store,
+     and anything unexpected) become kind='action' rows.
+   - Ties broken by keeping content rows above action rows at the same second. */
+function _buildTimeline(versions, auditItems) {
+  var CONTENT_ACTIONS = {
+    'deploy': 1, 'rollback': 1, 'snapshot': 1, 'baseline': 1,
+    'external-change-detected': 1, 'github-pull': 1, 'github-push': 1
+  };
+  var out = [];
+  var i;
+  for (i = 0; i < versions.length; i++) {
+    out.push({ kind: 'content', ts: versions[i].timestamp, v: versions[i] });
+  }
+  // Build a lookup of content timestamps (within 2 s tolerance) to dedupe.
+  var contentTimes = {};
+  for (i = 0; i < versions.length; i++) {
+    // Key by timestamp rounded to the second; check within a ±2 s window below.
+    var t = Date.parse(versions[i].timestamp);
+    if (!isNaN(t)) { contentTimes[Math.floor(t / 1000)] = true; }
+  }
+  function _nearContent(tsIso) {
+    var t = Date.parse(tsIso);
+    if (isNaN(t)) { return false; }
+    var sec = Math.floor(t / 1000);
+    for (var d = -2; d <= 2; d++) {
+      if (contentTimes[sec + d]) { return true; }
+    }
+    return false;
+  }
+  for (i = 0; i < auditItems.length; i++) {
+    var a = auditItems[i];
+    if (CONTENT_ACTIONS[a.action] && _nearContent(a.timestamp)) { continue; }
+    // Skip bulk acknowledge-all here — it shows up once per affected rule
+    // in audit only if we've filtered by rule; in that case treat it as a
+    // per-rule acknowledge event.
+    out.push({ kind: 'action', ts: a.timestamp, a: a });
+  }
+  // Sort newest-first
+  out.sort(function (x, y) {
+    if (x.ts < y.ts) { return 1; }
+    if (x.ts > y.ts) { return -1; }
+    // same timestamp: content rows above action rows
+    if (x.kind === 'content' && y.kind === 'action') { return -1; }
+    if (x.kind === 'action'  && y.kind === 'content') { return 1; }
+    return 0;
+  });
+  return out;
+}
+
+function renderVersionList() {
+  var el = document.getElementById('version-list');
+  el.innerHTML = '';
+  var tl = S.timeline || [];
+  var contentCount = 0, actionCount = 0;
+  for (var i = 0; i < tl.length; i++) {
+    if (tl[i].kind === 'content') { contentCount++; } else { actionCount++; }
+  }
+  var label = contentCount + ' version' + (contentCount === 1 ? '' : 's');
+  if (actionCount > 0) { label += ' · ' + actionCount + ' audit event' + (actionCount === 1 ? '' : 's'); }
+  document.getElementById('h-count').textContent = label;
+
+  if (!tl.length) { el.innerHTML = '<div class="loading-row">No versions yet.</div>'; return; }
+
+  tl.forEach(function (entry) {
+    if (entry.kind === 'content') {
+      el.appendChild(_makeContentRow(entry.v));
+    } else {
+      el.appendChild(_makeActionRow(entry.a));
+    }
+  });
+
+  document.getElementById('btn-compare').disabled  = (S.checked.length !== 2);
+  var btnVCompare = document.getElementById('btn-compare-v');
+  if (btnVCompare) { btnVCompare.disabled = (S.checked.length !== 2); }
+}
+
+function _makeContentRow(v) {
+  var row = document.createElement('div');
+  var isChecked = S.checked.indexOf(v.hash) !== -1;
+  row.className = 'v-row' + (isChecked ? ' v-sel' : '');
+
+  var isCurrent = S.rule && S.rule.latestHash === v.hash && !S.rule.drifted;
+  var curBadge  = isCurrent ? '<span class="badge b-ok">current</span>' : '';
+  var srcBadge  = sourceBadge(v.source);
+
+  row.innerHTML =
+    '<input type="checkbox"' + (isChecked ? ' checked' : '') + '>' +
+    '<span class="v-hash">' + esc(v.hash) + '</span>' +
+    '<div class="v-info">' +
+      '<div class="v-msg">' + esc(v.message || '(no message)') + '</div>' +
+      '<div class="v-meta">' +
+        '<span>' + esc(v.author || '?') + '</span>' +
+        '<span>' + esc(absTime(v.timestamp)) + '</span>' +
+        '<span>' + esc(relTime(v.timestamp)) + '</span>' +
+        curBadge + srcBadge +
+      '</div>' +
+    '</div>' +
+    '<div class="v-actions">' +
+      '<button class="btn-view">View</button>' +
+    '</div>';
+
+  var cb = row.querySelector('input[type=checkbox]');
+  cb.onchange = function () { toggleCheck(v.hash, cb.checked); };
+  row.querySelector('.btn-view').onclick = function (e) { e.stopPropagation(); openViewModal(v); };
+  return row;
+}
+
+/* Path Z: narrow info row for audit-only events (acknowledge, remove, etc.).
+   No checkbox, no buttons — these are informational markers in the timeline
+   telling you what happened to the rule between content events. */
+function _makeActionRow(a) {
+  var row = document.createElement('div');
+  row.className = 'v-row v-row-action';
+  var ACTION_LABEL = {
+    'acknowledge':          'Acknowledged',
+    'acknowledge-all':      'Acknowledged (bulk)',
+    'remove-from-store':    'Removed from store'
+  };
+  var label = ACTION_LABEL[a.action] || a.action;
+  var reason = a.reason ? (' — ' + a.reason) : '';
+
+  row.innerHTML =
+    '<span class="v-action-icon">&#9679;</span>' +
+    '<div class="v-info">' +
+      '<div class="v-msg"><em>' + esc(label) + '</em>' + esc(reason) + '</div>' +
+      '<div class="v-meta">' +
+        '<span>' + esc(a.author || '?') + '</span>' +
+        '<span>' + esc(absTime(a.timestamp)) + '</span>' +
+        '<span>' + esc(relTime(a.timestamp)) + '</span>' +
+      '</div>' +
+    '</div>';
+  return row;
+}
+
+/* --------------------------------------------------------------------------
+   Versions tab — deduplicated view keyed by blobFile (content hash).
+
+   History is an append-only timeline: if a rule is rolled back and redeployed
+   20 times between versions A and B, History shows 20 entries.  Versions
+   collapses those 20 into 2 rows (one per unique content hash) showing:
+     - first-introduced timestamp (earliest appearance)
+     - last-deployed timestamp (most recent deploy/tool-deploy/baseline)
+     - appearance count
+     - most-recent commit message + author for that hash
+     - a Deploy button (deploying a content hash is more meaningful than
+       deploying a point in time)
+-------------------------------------------------------------------------- */
+function loadVersionsTab() {
+  // Reuse S.versions if the History tab has already populated it this session;
+  // otherwise fetch.
+  if (S.versions && S.versions.length) {
+    renderVersionsList();
+    return;
+  }
+  var el = document.getElementById('versions-list');
+  el.innerHTML = '<div class="loading-row">Loading…</div>';
   GET('/rules/' + rp(S.rule) + '/versions', function (err, data) {
     if (err) {
       if (String(err).indexOf('404') !== -1) {
@@ -2291,36 +2789,101 @@ function loadHistory() {
       return;
     }
     S.versions = (data.versions || []).slice().reverse();
-    renderVersionList();
+    renderVersionsList();
   });
 }
 
-function renderVersionList() {
-  var el = document.getElementById('version-list');
+function _aggregateVersions(versions) {
+  // versions is newest-first.  We build a map keyed by blobFile (or hash),
+  // then return an array newest-first by last-seen timestamp.
+  var byBlob = {};
+  for (var i = 0; i < versions.length; i++) {
+    var v = versions[i];
+    var key = v.blobFile || (v.hash + '.tcl');
+    var rec = byBlob[key];
+    if (!rec) {
+      byBlob[key] = {
+        hash: v.hash,
+        blobFile: key,
+        firstSeen: v.timestamp,
+        lastSeen:  v.timestamp,
+        lastDeploy: null,
+        count: 1,
+        latestMessage: v.message,
+        latestAuthor:  v.author,
+        sources: {}
+      };
+      rec = byBlob[key];
+    } else {
+      rec.count++;
+      // versions is newest-first; index 0 is newest.  So the FIRST time we
+      // see a blob is its most recent appearance (set above as latestMessage
+      // and lastSeen).  Every subsequent visit is older, so update firstSeen.
+      rec.firstSeen = v.timestamp;
+    }
+    if (v.source) { rec.sources[v.source] = (rec.sources[v.source] || 0) + 1; }
+    // Track most recent deploy-like event for this blob
+    if (!rec.lastDeploy &&
+        (v.source === 'tool-deploy' || v.source === 'manual' || v.source === 'baseline')) {
+      rec.lastDeploy = v.timestamp;
+    }
+  }
+  // Flatten to array, sort newest-lastSeen first
+  var out = [];
+  var keys = Object.keys(byBlob);
+  for (var k = 0; k < keys.length; k++) { out.push(byBlob[keys[k]]); }
+  out.sort(function (a, b) {
+    // Descending by lastSeen
+    if (a.lastSeen < b.lastSeen) { return 1; }
+    if (a.lastSeen > b.lastSeen) { return -1; }
+    return 0;
+  });
+  return out;
+}
+
+function renderVersionsList() {
+  var el = document.getElementById('versions-list');
   el.innerHTML = '';
-  document.getElementById('h-count').textContent = S.versions.length + ' versions';
 
-  if (!S.versions.length) { el.innerHTML = '<div class="loading-row">No versions yet.</div>'; return; }
+  var agg = _aggregateVersions(S.versions || []);
+  document.getElementById('v-count').textContent = agg.length + ' distinct version' + (agg.length === 1 ? '' : 's');
 
-  S.versions.forEach(function (v) {
+  if (!agg.length) {
+    el.innerHTML = '<div class="loading-row">No versions yet.</div>';
+    return;
+  }
+
+  agg.forEach(function (v) {
     var row = document.createElement('div');
     var isChecked = S.checked.indexOf(v.hash) !== -1;
     row.className = 'v-row' + (isChecked ? ' v-sel' : '');
 
     var isCurrent = S.rule && S.rule.latestHash === v.hash && !S.rule.drifted;
     var curBadge  = isCurrent ? '<span class="badge b-ok">current</span>' : '';
-    var srcBadge  = sourceBadge(v.source);
+    var countPill = '<span class="vd-count-pill" title="Times this content hash has appeared in history">&times;' + v.count + '</span>';
+
+    // Pick a representative source badge — prefer the most recent source seen
+    // which is already captured by the first pass (we set rec from the newest
+    // entry).  The source icon isn't stored per-rec directly but we can infer
+    // from lastDeploy / any remaining source key.
+    var srcKeys = Object.keys(v.sources);
+    var mainSrc = srcKeys.length ? srcKeys[0] : null;
+    var srcBadge = sourceBadge(mainSrc);
+
+    var lastDeployStr = v.lastDeploy
+      ? ('Last deployed ' + relTime(v.lastDeploy))
+      : 'Never deployed via tool';
 
     row.innerHTML =
-      '<input type="checkbox"' + (isChecked ? ' checked' : '') + '>' +
+      '<input type="checkbox"' + (isChecked ? ' checked' : '') + ' title="Select for Compare">' +
       '<span class="v-hash">' + esc(v.hash) + '</span>' +
       '<div class="v-info">' +
-        '<div class="v-msg">' + esc(v.message || '(no message)') + '</div>' +
+        '<div class="v-msg">' + esc(v.latestMessage || '(no message)') + '</div>' +
         '<div class="v-meta">' +
-          '<span>' + esc(v.author || '?') + '</span>' +
-          '<span>' + esc(absTime(v.timestamp)) + '</span>' +
-          '<span>' + esc(relTime(v.timestamp)) + '</span>' +
-          curBadge + srcBadge +
+          '<span>' + esc(v.latestAuthor || '?') + '</span>' +
+          '<span>First seen ' + esc(relTime(v.firstSeen)) + '</span>' +
+          '<span>' + esc(lastDeployStr) + '</span>' +
+          countPill + curBadge + srcBadge +
         '</div>' +
       '</div>' +
       '<div class="v-actions">' +
@@ -2330,13 +2893,16 @@ function renderVersionList() {
 
     var cb = row.querySelector('input[type=checkbox]');
     cb.onchange = function () { toggleCheck(v.hash, cb.checked); };
-    row.querySelector('.btn-view').onclick    = function (e) { e.stopPropagation(); openViewModal(v); };
-    row.querySelector('.btn-deploy-v').onclick = function (e) { e.stopPropagation(); openDeployModal(v.hash); };
-
+    row.querySelector('.btn-view').onclick      = function (e) { e.stopPropagation(); openViewModal({ hash: v.hash, message: v.latestMessage }); };
+    row.querySelector('.btn-deploy-v').onclick  = function (e) { e.stopPropagation(); openDeployModal(v.hash); };
     el.appendChild(row);
   });
 
-  document.getElementById('btn-compare').disabled = (S.checked.length !== 2);
+  // Keep both Compare buttons in sync with S.checked state
+  var btnCompare  = document.getElementById('btn-compare');
+  var btnCompareV = document.getElementById('btn-compare-v');
+  if (btnCompare)  { btnCompare.disabled  = (S.checked.length !== 2); }
+  if (btnCompareV) { btnCompareV.disabled = (S.checked.length !== 2); }
 }
 
 function sourceBadge(src) {
@@ -2356,7 +2922,11 @@ function toggleCheck(hash, on) {
     var i = S.checked.indexOf(hash);
     if (i !== -1) { S.checked.splice(i, 1); }
   }
+  // Re-render both tabs so the checkbox + v-sel highlight stay in sync no
+  // matter which tab the user is looking at.  Guard against Versions being
+  // unpopulated (no agg yet) — renderVersionsList handles empty case.
   renderVersionList();
+  if (S.versions && S.versions.length) { renderVersionsList(); }
 }
 
 function runCompare() {
@@ -2730,6 +3300,30 @@ function renderDashboardHealth() {
   document.getElementById('db-s-drift').textContent       = drifted;
   document.getElementById('db-s-unversioned').textContent = newRules;
   document.getElementById('db-s-orphan').textContent      = orphaned;
+
+  // Make the "New" stat clickable when there are rules that could be acknowledged
+  // (non-drifted, snapshotted but not yet acknowledged).  Count only those that
+  // acknowledge-all will actually handle, so the counter matches the button.
+  var ackable = 0;
+  for (var i = 0; i < rules.length; i++) {
+    var r = rules[i];
+    if (r.onSystem && r.inVersionStore && !r.acknowledged && !r.drifted) {
+      ackable++;
+    }
+  }
+  var statEl = document.getElementById('db-stat-new');
+  if (statEl) {
+    if (ackable > 0) {
+      statEl.classList.add('db-stat-clickable');
+      statEl.title = 'Click to acknowledge all ' + ackable + ' eligible rule'
+        + (ackable === 1 ? '' : 's') + ' (drifted rules will be skipped)';
+      statEl.onclick = promptAcknowledgeAll;
+    } else {
+      statEl.classList.remove('db-stat-clickable');
+      statEl.title = 'Rules present on the BIG-IP that have no version history yet — will be baselined on next poll';
+      statEl.onclick = null;
+    }
+  }
 }
 
 function loadDashboardActivity() {
@@ -2824,6 +3418,10 @@ function openSettings() {
     document.getElementById('s-irulelinks').checked = !!s.iruleLinks;
     document.getElementById('s-tcllinks').checked  = !!s.tclManPageLinks;
     document.getElementById('s-debug').checked     = !!s.debugMode;
+    // Phase 8: theme + hideSystemRules
+    var theme = (s.theme === 'light' || s.theme === 'dark' || s.theme === 'auto') ? s.theme : 'auto';
+    document.getElementById('s-theme').value = theme;
+    document.getElementById('s-hidesys').checked   = (s.hideSystemRules !== false); // default true
     document.getElementById('settings-overlay').style.display = 'block';
   });
 }
@@ -2940,6 +3538,52 @@ function acknowledgeRule() {
     if (btn) { btn.style.display = 'none'; }
     loadRuleList();
     toast('success', 'Acknowledged', r.fullPath + ' marked as reviewed.');
+  });
+}
+
+/* --------------------------------------------------------------------------
+   Acknowledge all — bulk mark all non-drifted, snapshotted rules as reviewed.
+   Drifted rules are skipped server-side to preserve the drift signal.
+-------------------------------------------------------------------------- */
+function promptAcknowledgeAll() {
+  // Count how many would actually be acknowledged, so the modal is honest.
+  var ackable = 0;
+  for (var i = 0; i < S.rules.length; i++) {
+    var r = S.rules[i];
+    if (r.onSystem && r.inVersionStore && !r.acknowledged && !r.drifted) {
+      ackable++;
+    }
+  }
+  if (ackable === 0) {
+    toast('info', 'Nothing to acknowledge', 'No eligible rules — either none are new or all are drifted.');
+    return;
+  }
+  document.getElementById('ackall-count').textContent  = ackable;
+  document.getElementById('ackall-plural').textContent = ackable === 1 ? '' : 's';
+  document.getElementById('ackall-overlay').style.display = 'flex';
+}
+
+function closeAckAllModal() {
+  document.getElementById('ackall-overlay').style.display = 'none';
+}
+
+function acknowledgeAllRules() {
+  var btn = document.getElementById('btn-ackall-confirm');
+  if (btn) { btn.disabled = true; btn.textContent = 'Acknowledging...'; }
+  POST('/rules/acknowledge-all', { author: getAuthor() }, function (err, data) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Acknowledge all'; }
+    closeAckAllModal();
+    if (err)            { toast('error', 'Acknowledge-all failed', String(err)); return; }
+    if (!data || !data.ok) {
+      toast('error', 'Acknowledge-all failed', (data && data.error) || 'Unknown error');
+      return;
+    }
+    var rep = data.report || {};
+    var msg = (rep.acknowledged || 0) + ' acknowledged';
+    if (rep.skippedDrift) { msg += ', ' + rep.skippedDrift + ' drifted skipped'; }
+    toast('success', 'Bulk acknowledge done', msg);
+    loadRuleList();
+    if (S.view === 'dashboard') { renderDashboardHealth(); }
   });
 }
 
@@ -3162,6 +3806,11 @@ function confirmCreateRule() {
 
 
 function saveSettings() {
+  var theme = document.getElementById('s-theme').value;
+  if (theme !== 'light' && theme !== 'dark' && theme !== 'auto') { theme = 'auto'; }
+  var prevHideSys = (S.settings.hideSystemRules !== false);
+  var nextHideSys = document.getElementById('s-hidesys').checked;
+
   var p = {
     pollIntervalSeconds:  parseInt(document.getElementById('s-poll').value, 10) || 300,
     dashboardAuditLimit:  Math.max(5, parseInt(document.getElementById('s-dblimit').value, 10) || 15),
@@ -3170,7 +3819,9 @@ function saveSettings() {
     webhookOnDrift:       document.getElementById('s-webhookdrift').checked,
     iruleLinks:           document.getElementById('s-irulelinks').checked,
     tclManPageLinks:      document.getElementById('s-tcllinks').checked,
-    debugMode:            document.getElementById('s-debug').checked
+    debugMode:            document.getElementById('s-debug').checked,
+    theme:                theme,
+    hideSystemRules:      nextHideSys
   };
   var sec = document.getElementById('s-wsecret').value;
   if (sec) { p.webhookSecret = sec; }
@@ -3181,7 +3832,13 @@ function saveSettings() {
       S.settings.tclManPageLinks     = p.tclManPageLinks;
       S.settings.debugMode           = p.debugMode;
       S.settings.dashboardAuditLimit = p.dashboardAuditLimit;
+      S.settings.theme               = p.theme;
+      S.settings.hideSystemRules     = p.hideSystemRules;
       _applyEditorSettings();
+      applyTheme();
+      // If the hide-system toggle changed, the list must be re-fetched so the
+      // server-side filter reflects the new preference.
+      if (prevHideSys !== nextHideSys) { loadRuleList(); }
       toast('success', 'Settings saved');
       closeSettings();
     }
@@ -3318,6 +3975,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // History toolbar
   document.getElementById('btn-compare').onclick   = runCompare;
+  // Phase 8b: Compare from Versions tab — since the Diff pane is rendered
+  // under the History tab, switch there first so the user sees the result.
+  document.getElementById('btn-compare-v').onclick = function () {
+    activateTab('history');
+    runCompare();
+  };
   document.getElementById('btn-diff-close').onclick = hideDiff;
 
   // Deploy modal
@@ -3362,6 +4025,22 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('btn-remove-close').onclick      = closeRemoveModal;
   document.getElementById('btn-remove-cancel').onclick     = closeRemoveModal;
   document.getElementById('btn-remove-confirm').onclick    = confirmRemoveFromStore;
+
+  // Phase 8: Acknowledge-all
+  document.getElementById('btn-ack-all').onclick         = promptAcknowledgeAll;
+  document.getElementById('btn-ackall-close').onclick    = closeAckAllModal;
+  document.getElementById('btn-ackall-cancel').onclick   = closeAckAllModal;
+  document.getElementById('btn-ackall-confirm').onclick  = acknowledgeAllRules;
+  document.getElementById('ackall-overlay').onclick = function (e) {
+    if (e.target === this) { closeAckAllModal(); }
+  };
+
+  // Phase 8: theme select live preview — update S.settings.theme and reapply
+  // immediately so the user sees the change before clicking Save.
+  document.getElementById('s-theme').onchange = function () {
+    S.settings.theme = this.value;
+    applyTheme();
+  };
   document.getElementById('btn-inline-deploy').onclick = _executeInlineDeploy;
   document.getElementById('btn-inline-cancel').onclick = function () { setEditMode(false); };
   document.getElementById('deploy-inline-reason').addEventListener('input', function () {
@@ -3391,6 +4070,12 @@ document.addEventListener('DOMContentLoaded', function () {
       }
     }
     _applyEditorSettings();
+    // Phase 8c: re-apply theme now that S.settings.theme is populated.  The
+    // first applyTheme() call at DOMContentLoaded ran before settings were
+    // loaded, so an explicit 'dark' preference would have been ignored (the
+    // 'auto' branch would have run instead).  This second call picks up the
+    // actual saved setting.
+    applyTheme();
     loadRuleList();
     showDashboard();
   });

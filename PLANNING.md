@@ -15,11 +15,18 @@ along the lines of:
 > I am building an iApps LX extension for BIG-IP called "Rülbased".
 > The attached PLANNING.md contains all spec decisions, data models, REST API
 > definitions, GUI specifications, and the current implementation status.
-> Phase 7 is complete. Please read the planning doc and help me continue with
-> Phase 8 (code review, security audit, and cleanup).
+> Phase 7 is complete (package rename irule-versioner → rulbased, validated
+> on BIG-IP TMOS 21.x). The next phase is Phase 8: five UX improvements
+> from early reviewer feedback — acknowledge-all button, hide F5 system
+> iRules (`_sys_*`), Versions tab (deduplicated by content hash), dark mode
+> (three-way Light/Dark/Auto), and a small set of polish items. Phase 9
+> is HA awareness (hybrid push-on-write + periodic reconciliation, modeled
+> on AS3's approach), and Phase 10 is final code review / security audit /
+> optimization. Please read the planning doc and help me continue with
+> Phase 8.
 
-Upload both this file and the latest phase source zip (`rulbased-phase7.zip`)
-to give the new session full context.
+Upload both this file and the latest phase source zip
+(`rulbased-phase7-final.zip`) to give the new session full context.
 
 ---
 
@@ -397,7 +404,7 @@ the existing BIG-IP admin session cookie — no separate credentials.
 | GET | `/settings` | 1 | Read all global settings (credentials masked) |
 | PUT | `/settings` | 1 | Update global settings |
 
-### GitHub worker (`/github`) — Phase 9 (optional)
+### GitHub worker (`/github`) — Phase 11 (optional)
 
 | Method | Path | Phase | Description |
 |--------|------|-------|-------------|
@@ -530,7 +537,7 @@ config processor via `fetch()` calls to `/mgmt/shared/rulbased/`.
   7. Success: toast notification + history list refreshes + "current" badge moves
   8. Failure: error modal with tmsh error message
 
-#### Right panel — GitHub tab (Phase 9 — optional)
+#### Right panel — GitHub tab (Phase 11 — optional)
 
 - Link status: Linked / Unlinked / Diverged
 - If unlinked: "Link to GitHub" flow with repo browser (file picker)
@@ -1284,10 +1291,561 @@ Block template:
 
 ---
 
-### Phase 8 — Code review, security audit, and cleanup
+### Phase 8 — UX improvements from early reviewer feedback ✅ COMPLETE (shipped as v2.1.0 across four patches: 8, 8b, 8c, 8d)
 
-**Purpose:** Before cutting v2.0.0 for production use, perform a systematic
-review of the entire codebase to identify and resolve:
+**Purpose:** Incorporate feedback from initial Rülbased users before
+broader rollout. Five features, no architectural changes. Target release:
+v2.1.0.
+
+**Origin:** The operator shared Rülbased with a handful of early reviewers
+after Phase 7 completed. These five items were the consolidated feedback.
+Items 1–4 are pure feature work; HA sync (originally item 5 in the feedback
+list) became its own phase (Phase 9) because the implementation scope is
+substantial.
+
+#### Feature 1 — Acknowledge all
+
+**Problem:** On first install against a large BIG-IP deployment (hundreds
+of pre-existing iRules), the operator is faced with acknowledging every
+rule one-by-one before Rülbased starts tracking it meaningfully. This is a
+terrible first-run experience and discourages adoption.
+
+**Design:**
+- Two UI placements: (a) the dashboard health grid's "New" stat becomes a
+  clickable button ("Acknowledge all N new rules"); (b) a button in the
+  left-panel toolbar alongside "+ New iRule" and "Backup" so it's always
+  reachable from the rule list view
+- New endpoint `POST /rules/acknowledge-all` that sets `acknowledged: true`
+  on every rule manifest where `versions.length > 0` (matches the same gate
+  as the per-rule Acknowledge button)
+- Returns `{ acknowledged: N, skipped: M }` where skipped includes any
+  rules that could not be acknowledged for reason (drifted, missing baseline)
+- Confirmation dialog before execution: "Acknowledge N rules? This cannot
+  be undone individually — each rule will still be tracked normally after
+  this point, but the 'newly enrolled' marker will be cleared."
+- Does NOT acknowledge drifted rules (`drifted: true`) — those genuinely
+  need per-rule review. Post-run status message notes how many were skipped
+  and why
+- Audit log entry per bulk operation: `action=acknowledge-all
+  count=<N> by=<user>` rather than N individual acknowledge entries, to
+  keep the audit log readable
+
+#### Feature 2 — Hide F5 system iRules
+
+**Problem:** F5 ships a set of system iRules under the `_sys_` prefix
+(for example `_sys_https_redirect`, `_sys_auth_krbdelegate`). These clutter
+the rule list and aren't things operators typically version-control. They
+should be hidden by default with an option to show them.
+
+**Design:**
+- Detection rule: rule name starts with `_sys_`. We do not attempt to
+  inspect the tmsh `nodelete nowrite` flags (those live in tmsh metadata
+  and are stripped from iControl REST's `apiAnonymous` field — the only
+  field we currently read). Name-prefix detection is sufficient and matches
+  F5's own convention
+- New setting `hideSystemRules` (default `true`), configurable via Settings
+  modal checkbox: "Hide F5 system iRules (names starting with `_sys_`)"
+- Filter applied server-side in `rulesWorker.onGet` for `/rules` list
+  response when the setting is enabled; filtered rules simply do not appear
+  in the response. Dashboard stats and health counters exclude them too
+- Muted status line at the bottom of the left panel: "N system iRules
+  hidden" (when filter is active), which doubles as a hint that the setting
+  exists
+- The filter also prevents the poll worker from creating manifests for
+  system rules, so `_sys_*.json` files do not accumulate in the data
+  directory
+- If a system rule is ever renamed to a non-`_sys_` name externally
+  (unlikely), the next poll picks it up normally; if a user rule is renamed
+  to start with `_sys_`, it becomes hidden (and we keep its manifest file
+  for history preservation)
+
+#### Feature 3 — Versions tab
+
+**Problem:** The History tab shows a chronological timeline of every
+snapshot, deploy, and rollback. This is good for audit but confusing when
+an iRule has been rolled back and redeployed multiple times — the history
+might show 20 entries but represent only 2 distinct content versions.
+Operators find it hard to answer "how many actual configurations of this
+iRule have ever existed?"
+
+**Design:**
+- New **Versions** tab alongside the existing History tab in the rule
+  detail view
+- Versions tab aggregates entries in the manifest's `versions[]` array by
+  `blobFile` (the content-addressed hash). Each unique blob appears once,
+  showing:
+  - Short hash (first 7 chars of the blob filename)
+  - First-introduced timestamp (earliest `versions[]` entry with this hash)
+  - Last-deployed timestamp (most recent `versions[]` entry with this hash
+    where `action` was `deploy` or `initial`)
+  - Count of times this version has appeared in history
+  - Most-recent commit message
+  - Author (from most recent appearance)
+- History tab behaviour unchanged — it remains the append-only timeline
+  for audit purposes
+- **Deploy button moves to Versions tab.** Deploying "a specific version"
+  makes more sense in the deduplicated view — you deploy a content hash,
+  not a point in time. Versions tab rows have a Deploy button
+- **Diff button stays in History tab.** Diffing is inherently between two
+  points in time ("what changed between these two events"), which is a
+  History concept, not a Versions concept
+- Pure GUI aggregation over existing `versions[]` data — no schema change,
+  no data migration, no backend work beyond a small `/rules/:name/versions`
+  endpoint that returns the deduplicated projection (alternatively, the GUI
+  computes the projection client-side from the existing manifest response —
+  preferred for simplicity)
+- Default tab when opening a rule stays at **History** (no change in
+  first-click behaviour)
+
+#### Feature 4 — Dark mode
+
+**Problem:** The GUI currently inherits a single light theme. Many
+operators prefer dark mode, especially those who keep terminal windows and
+Rülbased open side-by-side.
+
+**Design:**
+- Three-way setting `theme: "light" | "dark" | "auto"`, stored in
+  `settings.json`, default `"auto"`
+- `"auto"` uses `window.matchMedia('(prefers-color-scheme: dark)')` and
+  listens for changes (so switching the OS theme updates Rülbased live)
+- CSS is already variable-based (`:root { --bg: ... }`) from Phase 4's
+  TMUI-theme-detection work — the dark mode is mostly adding a
+  `[data-theme="dark"]` variable override block rather than a full rewrite
+- Settings modal: new "Appearance" section with three radio buttons
+  Light / Dark / Auto
+- Dark-mode colour targets needing explicit attention (the existing
+  TMUI-theme-detection work established defaults but they need a careful
+  pass):
+  - iRule syntax highlighting overlay (F5 red for events, jade green for
+    namespaces) — ensure readable contrast in both themes
+  - CodeMirror editor theme (has built-in themes; select `material-darker`
+    for dark mode, default light otherwise)
+  - Diff viewer background colours for added/removed/unchanged lines
+  - Toast notifications (success/warn/error colour tones)
+  - Modal overlays and focus rings
+- Persistence: theme selection persists per-user via the settings REST
+  endpoint. Since settings are device-local in Phase 8 (no HA sync yet),
+  users on an HA pair may need to set theme on both devices; Phase 9's
+  settings sync eliminates that
+
+#### Integration notes
+
+- All four features land in a single v2.1.0 release
+- README gets a "What's new in 2.1" section at the top
+- `app.html` gains a changelog entry `v2.1.0` listing all four features
+- No migrations required — all features are pure GUI and settings
+  additions that default to backward-compatible behaviour
+- `configProcessor.VERSION` bumps to `2.1.0`
+- RPM version bumps to `2.1.0-0001`
+
+**Deliverables:**
+- `/rules/acknowledge-all` endpoint + GUI button + confirmation dialog
+- `hideSystemRules` setting + filter logic in `rulesWorker` + GUI checkbox
+- Versions tab in rule detail view (client-side aggregation of existing
+  manifest data)
+- Deploy button moved from History to Versions; Diff stays in History
+- Three-way theme toggle in Settings + CSS variable overrides for dark
+  mode + CodeMirror theme switch
+- README "What's new in 2.1" section
+- `app.html` v2.1.0 changelog entry
+- Version bumps in `configProcessor.VERSION` and build scripts
+- Regression test: ensure the existing per-rule Acknowledge, the poll
+  worker, the export/import round-trip, and the TMUI-theme-detection
+  feature all still work
+
+#### Phase 8 — As shipped (four patches, still v2.1.0)
+
+Phase 8 landed in four successive patches against a live BIG-IP, with the
+operator walking each one through a human reviewer between patches. Every
+patch preserves the same `configProcessor.VERSION = 2.1.0` — these are all
+point refinements within one release. All four patches are shipped as
+`patch-phase8.sh`, `patch-phase8b.sh`, `patch-phase8c.sh`,
+`patch-phase8d.sh`.
+
+**Patch 8 — the four original features plus the one holdover from 8c:**
+- `acknowledge-all` with bulk audit entry, drifted-rule skip, dual UI
+  placement — shipped as planned
+- `hideSystemRules` with the `_sys_*` + `nodelete nowrite` dual detection
+  — shipped as planned. The original plan had name-prefix detection only,
+  but the two-part detection was adopted to avoid filtering any user rule
+  that happens to start with `_sys_`. The body marker is checked via
+  `String.fromCharCode(10)` comparison because heredoc-embedded `\n`
+  escapes break on transit through the patch script convention
+- Versions tab with client-side blob-hash aggregation, Deploy button
+  migration, Diff button staying on History — shipped as planned
+- Three-way theme setting with OS + TMUI-frame detection — shipped as
+  planned
+
+**Patch 8b — reviewer feedback round 1:**
+- CodeMirror dark-mode background was too dark (black `#0d1117`) against
+  the left sidebar. Lightened the editor background to `#1f2937` (same
+  family as the sidebar, slightly different tone for eye tracking between
+  the panels)
+- Theme radio buttons replaced with a dropdown in Settings — the radios
+  read as heavier-weight than the one-of-three choice warranted
+- History tab gained inline italic "info" rows for `acknowledge` and
+  `remove-from-store` audit events, merged client-side from a parallel
+  `GET /rules/audit` fetch with a 2-second dedupe window against
+  content-change audit entries. Full audit tab stays intact — this is
+  purely a readability enhancement of the per-rule History view
+- Compare checkbox added on both History and Versions so the two-version
+  selector can be driven from whichever tab is in view
+
+**Patch 8c — reviewer feedback round 2 (dark mode legibility):**
+- Dark mode was not applied on first page load when the persisted
+  `theme=dark`. Root cause: `applyTheme()` ran at DOMContentLoaded before
+  `GET /settings` returned, so `S.settings.theme` was undefined and
+  `'auto'` branch fell through to light. Fix: a second `applyTheme()` call
+  inside the settings-load callback after `S.settings` is populated
+- Saving settings wiped TCL syntax highlighting entirely. Root cause:
+  the original plan called for swapping CodeMirror to
+  `cm-s-material-darker` in dark mode, but only `cm-s-default` CSS is
+  bundled in `app.html`. Swapping the theme class flipped the class
+  without any rules attached, collapsing TCL tokens to plain body text.
+  Fix: abandon the CM theme swap entirely; keep `cm-s-default` always and
+  apply a full dark palette via `body.iv-dark .cm-s-default .cm-*` CSS
+  overrides with `!important`. Brand colors (`cm-irule-kw` = F5 red
+  `#ff4d6d`, `cm-irule-cmd` = jade green `#00c94a`) are preserved across
+  both themes
+- Editor background unified with sidebar (`#1f2937`), gutter set to
+  `#1a2332` (a shade darker than the editor body) for line-number
+  separation without a hard border. Explicit `.CodeMirror-gutters` and
+  `.CodeMirror-linenumber` rules under `body.iv-dark`
+
+**Patch 8d — reviewer feedback round 3 (highlighting gaps + click UX):**
+- Syntax highlighting for 93 top-level iRules commands from the CloudDocs
+  *Commands* page. The phase 3 scrape captured `IRULE_EVENTS` and
+  `IRULE_NS_CMDS` (namespace-prefixed) but missed the bare verbs —
+  `when`, `log`, `call`, `pool`, `node`, `snat`, `virtual`, `reject`,
+  `drop`, `forward`, `priority`, `timing`, `event`, `after`, `proc`,
+  `return`, `persist`, and 76 others. Those rendered as plain text, or as
+  TCL purple for the handful that collide with TCL keywords (`proc`,
+  `return`, `after`, `class`). New `IRULE_TOP_CMDS` array + `_IRULE_TOP_SET`
+  lookup wired into the overlay *before* the TCL check, so overlap names
+  take the iRules color. Reuses the existing `cm-irule-kw` class (F5 red)
+  — no new CSS. CloudDocs URL scheme for top-level commands follows the
+  events convention: `https://clouddocs.f5.com/api/irules/<cmd>.html`
+- Click-to-docs now requires Ctrl (or Cmd on macOS). Plain click was
+  triggering document navigation on any highlighted token, which
+  prevented placing the cursor inside a linked word. Click handler
+  early-returns when no modifier is held, so CodeMirror's native
+  mousedown places the cursor as usual. Matches the IDE-universal
+  go-to-definition gesture. Tooltip help text updated
+
+#### Phase 8 — Lessons learned
+
+- **"Just ship a CodeMirror theme swap" didn't work.** The `cm-s-*` theme
+  packages have their own CSS stylesheets that need to be bundled
+  separately, and `app.html` only ships `cm-s-default`. Changing the
+  theme class without the matching stylesheet silently breaks
+  highlighting (the class flips but the selectors find no rules). For
+  any future theme work, bundle the stylesheet alongside or override on
+  top of `cm-s-default` — don't rely on unbundled themes
+- **Settings-dependent UI needs a post-load hook.** The first-load dark
+  mode bug was straightforward in retrospect: any initialization that
+  depends on `S.settings` must run *after* the `/settings` fetch
+  resolves, not just at DOMContentLoaded. Worth looking for other
+  subtle instances of this pattern across the codebase in a future pass
+- **CloudDocs "Commands" page is heterogeneous.** The page mixes
+  top-level commands, namespace-scoped commands (`NS::cmd`), and
+  "Operators". A clean scrape of just top-level commands requires
+  filtering out entries containing `::` and the `Operators` doc-page
+  category. This was done by hand for phase 8d; if the list ever needs
+  refreshing, script it rather than re-listing by hand
+- **`!important` is the right escape hatch for overlay palettes.**
+  CodeMirror's base theme sets `color` on its token classes; overriding
+  from a body-class selector requires `!important` to win against
+  CM's style specificity. The alternative (tearing up CM's theme
+  system) is far more invasive for no practical gain
+- **Click handlers on document-capture need Ctrl/Cmd gating from day
+  one.** The 8d Ctrl+click fix wasn't a new problem — it was latent from
+  phase 3 when click-to-docs shipped. Any future "clickable word in an
+  editor" feature should gate on modifier keys by default, because
+  editor tokens need to be cursor-target-able
+- **Patch-script iteration scales better than re-packaging the RPM.**
+  Four patches in one afternoon against a live device would have been
+  unworkable with full RPM rebuild/install/restart cycles. The
+  patch-script convention (cat-into-heredoc, `cp` preserving inode
+  ownership, sentinel uniqueness, JS `node --check` pre-flight, health
+  check after `bigstart restart restnoded`) held up across all four
+  patches without a regression. Zip repackage happens only at
+  end-of-phase, not per-patch
+- **Sentinel uniqueness matters.** Each patch uses a distinct heredoc
+  sentinel (`EOF_APP_HTML` → `EOF_APP_HTML_8B` → `EOF_APP_HTML_8C` →
+  `EOF_APP_HTML_8D`) so a downstream user who concatenates multiple
+  patches into a single shell script doesn't get silent truncation from
+  a sentinel collision
+- **Simulated apply catches footgun bugs before the device does.**
+  Every patch ran against a sandbox mirror at `/tmp/phase8X-sim/` with
+  `bigstart` and `curl` stubbed, followed by a `diff -q` byte-compare
+  against the working app.html. This caught two mistakes before they
+  hit the real BIG-IP (a stray `$WORK` that wasn't expanded in the
+  heredoc on patch 8; a tab→space mismatch in one of the insertion
+  points on 8b) that would otherwise have tripped the health check and
+  required a rollback
+
+---
+
+### Phase 9 — HA awareness for BIG-IP device clusters
+
+**Purpose:** Rülbased on an HA pair (or larger DSC) should present a
+unified view of version history, audit log, and settings across devices,
+rather than each device being an isolated island. Target release: v2.2.0.
+
+#### Phase 9 — Open decisions (resolve before coding starts)
+
+The design below captures the intended architecture, but five scoping
+decisions need operator input before the first patch lands. Each has
+meaningful tradeoffs and shouldn't be assumed away.
+
+1. **Phase 9 subdivision.** Phase 9 is substantially bigger than Phase 8
+   (device discovery, new endpoints, cross-device HMAC, reconciliation
+   loops, audit merge semantics). Break into 2–4 incremental patches
+   (9, 9b, 9c…) so each can be live-tested on a real HA pair before the
+   next lands. Propose a breakdown with reasoning; operator picks.
+
+2. **HMAC shared secret — generation and storage.** The replication
+   design assumes a shared secret stored on both devices. Practical
+   options to walk through: manual operator setup (generate, paste into
+   Settings on each device), auto-generated on first peer discovery
+   (one device creates it, pushes to peer via authenticated iControl
+   REST), tmsh data-group reuse (store as a hidden data-group that
+   ConfigSync naturally replicates). Each has tradeoffs around operator
+   burden, bootstrap ordering, and audit trail. Operator picks.
+
+3. **Standalone detection cutoff.** Rülbased must be zero-overhead on
+   standalone BIG-IPs. When and how do we check? Startup only, or
+   periodic re-check to catch operators joining a device-group later?
+   GUI behavior on standalone — hide HA UI entirely, or show disabled
+   controls with an "HA features unavailable on standalone" hint?
+   Operator picks.
+
+4. **Audit log merge semantics.** Audit entries from multiple devices
+   interleave with `device` attribution preserved. GUI render options:
+   inline device tag on each row, filter chip to narrow to one device,
+   grouping by device with a collapsed/expanded toggle, or some combo.
+   Operator picks.
+
+5. **Test strategy.** Unit tests don't naturally cover cross-device
+   replication. Integration test options: simulated peer endpoints via
+   loopback with a second restnoded port, two separate containers with
+   mocked iControl, or real two-device HA lab time (slowest but most
+   faithful). Operator picks based on available lab infrastructure.
+
+**Problem statement:** BIG-IP's native ConfigSync operates at the folder
+level on iControl objects and explicitly does NOT synchronize the
+`/var/config/rest/iapps/` filesystem tree (F5 K21259300 lists "LX
+Workspaces" on the not-synced list, and our data directory falls under
+this category even though it's not an LX Workspace in the formal sense —
+the same storage location, the same exclusion). This means:
+
+- Rülbased's version store (`/var/config/rest/iapps/rulbased/data/`) is
+  per-device
+- A deploy on the active device creates a version entry the standby
+  doesn't know about
+- Failover leaves operators looking at a standby with no history of what
+  the active device had been doing
+- Settings changes made on one device don't reach the other
+- The iRule content itself DOES sync (that's ConfigSync's proper job and
+  works fine) — only Rülbased's *metadata about* the iRule doesn't sync
+
+**Architecture decision (from Phase 9 planning):** Hybrid push-on-write +
+periodic reconciliation, modeled on how AS3 integrates with ConfigSync.
+
+#### How AS3 solves this (reference)
+
+AS3 stores its persistent settings in a tmsh data-group
+(`/Common/appsvcs/settings`) which IS synced by ConfigSync natively.
+AS3 also exposes a `syncToGroup` property in the declaration that, when
+set, causes AS3 to call `tmsh run cm config-sync to-group <group>` after
+a deploy. AS3 doesn't invent a custom replication layer — it makes its
+data ConfigSync-native by storing it in synced TMOS objects, and triggers
+sync via the existing `cm config-sync` command.
+
+This pattern doesn't translate directly to Rülbased because our state is a
+directory tree of version blobs, manifests, and JSON files (potentially
+megabytes per rule), which would be abusive to store in a data-group. But
+the *spirit* transfers: treat ConfigSync as the coordination signal, and
+align our replication with the operator's existing sync workflow where
+possible.
+
+#### Hybrid design
+
+**Three replication pathways, layered:**
+
+1. **Push-on-write (primary path, low latency):** After every successful
+   write in `versionStore.js`, `settings.js`, or audit append in
+   `notifier.js`, the active device POSTs the delta to peer devices via
+   their iControl REST endpoint. New endpoint on each device's Rülbased
+   worker: `POST /rules/peer-apply` that accepts a delta record, validates
+   it (HMAC-signed from the peer using a shared secret stored on both
+   devices), and applies it locally. Push-on-write gives operators the
+   expected "I clicked Deploy on A, it immediately shows up on B" feel
+
+2. **Periodic reconciliation (safety net):** A background task runs every
+   60s on each device, asks peers for their current version-store manifest
+   hash, and pulls deltas for anything it's missing. Catches writes that
+   the push-on-write path missed (peer was unreachable, network partition,
+   restnoded crash mid-push). Eventually-consistent — a peer that was
+   down for an hour catches up within a minute of coming back
+
+3. **Manual reconcile button (operator escape hatch):** Settings modal
+   gains a "Force sync now" button that triggers an immediate full
+   reconciliation with peers. For operators who want to verify state, or
+   recover from a weird edge case
+
+#### Device discovery
+
+Rülbased reads `/mgmt/tm/cm/device` on startup to enumerate peers in the
+local device's device-groups. An operator setting `haSyncGroup` (default
+auto-detect) lets operators scope sync to a specific device-group in
+multi-group topologies, analogous to AS3's `syncToGroup`. If no device-
+groups are configured (standalone BIG-IP), Rülbased detects that and
+skips all HA code paths entirely — zero overhead on standalone.
+
+#### What syncs, what doesn't
+
+**Syncs across all devices in the HA sync group:**
+- Rule manifests (the per-rule `.json` files including `versions[]`,
+  acknowledgement state, commit messages, authors)
+- Blob objects (the content-addressed TCL bodies)
+- `settings.json` (so operator intent — poll interval, webhook URL, syslog
+  enablement, theme preference — is consistent across devices)
+- Audit log entries (**but** each entry carries a `device` field
+  identifying where the action originated; entries from multiple devices
+  interleave in the unified audit log, with device attribution preserved
+  per-entry)
+
+**Does NOT sync (stays per-device):**
+- Nothing — but the `device` field on each audit entry makes the
+  distinction visible in the GUI. An operator viewing the audit log on
+  Device A sees "Device A deployed X at T=100; Device B deployed Y at
+  T=105" rather than an ambiguous merged log
+
+The `device` field on audit entries is the BIG-IP hostname, captured
+at worker startup via `tmsh list sys global-settings hostname` (cached
+per-worker-instance). Syslog messages emitted by `notifier.js` also
+gain the device hostname prefix for consistency with the audit log.
+
+#### Conflict resolution
+
+Audit log entries use `device + timestamp + randomId` as a composite
+primary key. Merging two devices' logs is a union operation (entries
+keyed by composite ID). No entry is ever overwritten; the audit log is
+append-only and merge-friendly by design.
+
+Rule manifests and settings are last-writer-wins per-field, using a
+Lamport-clock-style counter (`.lastModifiedByDevice`,
+`.lastModifiedGeneration`) that increments on every write. During
+reconciliation, the side with the higher generation wins, with tie-break
+by device hostname lexicographic order. This is a pragmatic choice —
+a formally correct CRDT is overkill for this workload where operators
+are rarely making conflicting edits simultaneously.
+
+#### Settings sync gotcha
+
+The AS3 GitHub issue #525 surfaced a known race: when the data-group
+syncs faster than the in-memory API state updates on the peer, brief
+inconsistency windows exist. Our equivalent: after a
+`POST /peer-apply` is received and processed, the receiving device's
+worker needs to re-read its own on-disk settings (because our in-memory
+cache is now stale). We handle this by invalidating the in-memory cache
+on every `/peer-apply` call and letting the next read reload from disk.
+
+#### Failure modes
+
+- **Peer unreachable during push:** the push returns an error; the
+  periodic reconciliation picks it up within 60s. Audit entry tagged as
+  "pending replication" until reconciled (visible in GUI as a subtle badge)
+- **Peer unauthenticated / HMAC mismatch:** reject with 403; log a loud
+  warning; the operator must run the new `rulbased-configure-ha` CLI
+  (shipped inside the RPM like `post-install.sh`) to re-establish trust
+- **Split-brain (both devices active briefly):** both sides log audit
+  entries; reconciliation merges them; last-writer-wins resolves manifest
+  diverge. No data is lost; operator can inspect both entries in audit log
+- **Peer crashes mid-reconciliation:** the receiving side's writes are
+  idempotent (same composite key → same record); partial reconciliation
+  is safe to retry
+
+#### Packaging
+
+Single RPM, no sidecar (confirmed in planning). HA code lives in main
+worker bundle, gated by `_detectHaMode()` helper that runs at worker
+startup and caches the result. Standalone BIG-IPs pay zero runtime cost.
+
+#### Post-install setup for HA
+
+Extends `post-install.sh` (from Phase 7) with an HA setup mode:
+`post-install.sh --ha` detects device-group membership and generates a
+shared HMAC secret stored at `/var/config/rest/iapps/rulbased/data/.ha-secret`
+(chmod 0600, owned by restnoded). Operator runs this on BOTH devices with
+the same secret passed as an argument, OR the script uses iControl REST
+to exchange the secret between peers (operator provides admin creds for
+the peer during setup).
+
+A `rulbased-configure-ha` CLI tool (new in Phase 9) handles secret
+rotation, peer list updates, and force-reconciliation from the command
+line for operators who want scripted HA management.
+
+**Deliverables:**
+- `_detectHaMode()` in `rulesWorker.onStart` that reads
+  `/mgmt/tm/cm/device` and `/mgmt/tm/cm/device-group`, caches peer list
+- `peerClient.js` new lib: HMAC-signed iControl REST calls to peers
+- `POST /rules/peer-apply` endpoint on rulesWorker: receive-side handler
+- Push-on-write hooks in `versionStore.saveVersion`, `settings.update`,
+  and `notifier.appendAudit`
+- Periodic reconciliation worker (`haReconciler.js`) similar structure
+  to `pollWorker.js`
+- `device` field added to all audit log entries (backward-compatible —
+  old entries read as `device: "unknown"`)
+- `lastModifiedByDevice` / `lastModifiedGeneration` fields on manifests
+  (migration v2→v3 — see migration note below)
+- Composite-key schema for audit log entries (migration v2→v3)
+- GUI: audit log displays Device column; dashboard shows peer status
+  indicator; Settings gains "HA configuration" section with peer list,
+  sync group, force-sync button, and HMAC rotation UI
+- Syslog notifier prefixes device hostname on all messages
+- `rulbased-configure-ha` CLI tool shipped in `build/`, added to RPM
+  payload
+- `post-install.sh --ha` mode for initial HA setup
+- README: new "HA deployment" section explaining the model and setup steps
+- `configProcessor.VERSION` → `2.2.0`
+- Migration: the existing `migrations.js` gets a v2→v3 step that adds
+  `device: <hostname>` and composite-key IDs to existing audit entries,
+  and adds `lastModifiedByDevice` / `lastModifiedGeneration` to
+  existing manifests. Idempotent. Tested on a populated version store
+  before release
+- Test matrix: standalone, active/standby, active/active, failover,
+  split-brain recovery, peer unreachable, HMAC rotation, large backfill
+  (simulating a new device joining an existing HA pair)
+
+**Phase 9 risks to track:**
+- HMAC secret distribution is a footgun similar to Phase 7's post-install
+  step — operators will forget to run it on both devices, or get the
+  secret out of sync. The setup CLI should detect mismatches loudly
+- Push-on-write adds latency to deploy/save operations; measure and
+  document overhead; consider making push-on-write async (fire-and-forget
+  with retry queue) if latency is unacceptable
+- Reconciliation loop interacts with poll worker — need to make sure
+  they don't deadlock or double-write during their overlap
+- Operators may have existing data on one device and none on the peer
+  when they enable HA — the backfill path must be robust
+- iControl REST file-transfer for blob objects has size/quota limits
+  worth checking; fall back to chunked upload if needed
+
+---
+
+### Phase 10 — Code review, security audit, and cleanup
+
+**Purpose:** Before declaring the codebase production-grade (target release
+v2.3.0), perform a systematic review to identify and resolve latent
+issues. Phase 10 is the final pre-production pass; it runs after Phase 8
+(UX features) and Phase 9 (HA awareness) are shipped and in use. The
+value of running this phase last is that the HA code from Phase 9 will
+itself need review, and Phase 10 can review the full codebase including
+both recent additions rather than chasing a moving target.
+
+**Review scope:**
 
 - **Dev artifacts:** console.log statements, debug flags left on, placeholder
   comments, TODO/FIXME markers, commented-out code blocks, test-only endpoints
@@ -1321,9 +1879,10 @@ review of the entire codebase to identify and resolve:
 
 **Deliverables:**
 - Annotated issue list with severity (blocker / should-fix / nice-to-have)
-- All blockers and should-fixes resolved before cutting production RPM
+- All blockers and should-fixes resolved before cutting v2.3.0 RPM
 - PLANNING.md updated with any new architectural decisions
 - README updated with any changed behaviour
+- `configProcessor.VERSION` → `2.3.0`; RPM version bump accordingly
 
 ---
 
@@ -1340,10 +1899,10 @@ mitigated" are resolved; the remainder are active considerations.
 | Poll worker stacking during failover | Already mitigated: single-flight `_running` boolean lock in `pollWorker.js` |
 | Large iRule content exceeding REST response buffer | iControl REST returns full `apiAnonymous` content in a single JSON response; BIG-IP enforces a 32MB response limit which is far above any realistic iRule size |
 | localhost:8100 trusted channel unavailable | Only occurs if restjavad is not running (system startup/failover). `bigipClient.js` surfaces a clear ECONNREFUSED error; the poll worker's single-flight lock prevents cascading failures |
-| GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI (Phase 9 — optional) |
-| Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution (Phase 9 — optional) |
+| GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI (Phase 11 — optional) |
+| Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution (Phase 11 — optional) |
 | CodeMirror bundle size | Inlined directly into `app.html` as `<script>`/`<style>` blocks (~187KB). No vendor file requests. CDN not used. `bundle-codemirror.sh` available if separate vendor files are needed for RPM size reasons. |
-| BIG-IP management plane has no outbound internet | GitHub integration (Phase 9 — optional) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
+| BIG-IP management plane has no outbound internet | GitHub integration (Phase 11 — optional) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
 | Concurrent deploys to the same iRule | Already mitigated: per-rule deploy lock (`_deployLock` in-memory Map) in `rulesWorker.js` |
 
 ---
@@ -1363,13 +1922,13 @@ rulbased/
 │       ├── rulesWorker.js         ← REST: /rules (Phase 1+2) ✅
 │       ├── settingsWorker.js      ← REST: /settings + /settings/test-* ✅
 │       ├── uiWorker.js            ← REST: /ui static file server (Phase 2) ✅
-│       ├── githubWorker.js        ← REST: /github (Phase 9 — optional)
+│       ├── githubWorker.js        ← REST: /github (Phase 11 — optional)
 │       ├── bigipClient.js         ← iControl REST reads+writes via localhost:8100 ✅
 │       ├── notifier.js            ← syslog + webhook notifications (Phase 5) ✅
 │       ├── tmsh.js                ← tmsh child process wrapper ✅
 │       ├── versionStore.js        ← filesystem version store ✅
 │       ├── pollWorker.js          ← scheduled change detection ✅
-│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 9 — optional)
+│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 11 — optional)
 │       ├── settings.js            ← in-memory settings + persistence ✅
 │       ├── blockUtil.js           ← iApps LX state transition helpers ✅
 │       ├── logger.js              ← restnoded logger wrapper ✅
@@ -1416,11 +1975,11 @@ Files marked ✅ are complete. All others are planned for the phase indicated.
 - **GitHub App private key storage:** PEM keys are multi-line and don't store
   cleanly in a single iApps LX block property. Options: (a) store as a single
   `\n`-escaped string; (b) write to a separate file in the data directory and
-  store only the path in settings. Decision deferred to Phase 9 (optional).
+  store only the path in settings. Decision deferred to Phase 11 (optional).
 
 ---
 
-### Phase 9 — GitHub integration (optional — scope and security TBD)
+### Phase 11 — GitHub integration (optional — scope and security TBD)
 
 **Status: deferred.** This phase is held pending a clearer understanding of the
 network security requirements and credential storage model. The full design
