@@ -48,7 +48,7 @@ function run(args, cb) {
     env: env
   }, function (err, stdout, stderr) {
     if (err) {
-      logger.error('tmsh ' + args.join(' ') + ' failed: ' + (stderr || err.message));
+      logger.severe('tmsh ' + args.join(' ') + ' failed: ' + (stderr || err.message));
       return cb(new Error(stderr || err.message));
     }
     cb(null, stdout);
@@ -74,14 +74,14 @@ function deployRule(partition, name, content, cb) {
 
   fs.writeFile(tempFile, stanza, { encoding: 'utf8', mode: 384 }, function (writeErr) { // 384 = 0600 octal
     if (writeErr) {
-      logger.error('tmsh.deployRule: writeFile failed: ' + writeErr.message);
+      logger.severe('tmsh.deployRule: writeFile failed: ' + writeErr.message);
       return cb(new Error('Failed to write staging file: ' + writeErr.message));
     }
 
     // Verify the file is readable before handing to tmsh
     fs.stat(tempFile, function (statErr, stat) {
       if (statErr) {
-        logger.error('tmsh.deployRule: stat failed after write: ' + statErr.message);
+        logger.severe('tmsh.deployRule: stat failed after write: ' + statErr.message);
         return cb(new Error('Staging file not accessible after write: ' + statErr.message));
       }
       logger.info('tmsh.deployRule: staging file ok, size=' + stat.size + ' mode=' + stat.mode.toString(8));
@@ -90,14 +90,14 @@ function deployRule(partition, name, content, cb) {
         fs.unlink(tempFile, function () {});
 
         if (loadErr) {
-          logger.error('tmsh.deployRule: load failed: ' + loadErr.message);
+          logger.severe('tmsh.deployRule: load failed: ' + loadErr.message);
           return cb(loadErr);
         }
 
         logger.info('tmsh.deployRule: load succeeded, saving config');
         run(['-c', 'save sys config'], function (saveErr) {
           if (saveErr) {
-            logger.warn('deployRule: save sys config failed (non-fatal): ' + saveErr.message);
+            logger.warning('deployRule: save sys config failed (non-fatal): ' + saveErr.message);
           }
           cb(null);
         });

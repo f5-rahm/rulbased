@@ -124,7 +124,7 @@ function _emitSyslog(payload) {
     { timeout: 5000 },
     function (err, stdout, stderr) {
       if (err) {
-        logger.warn('notifier: /var/log/ltm emission failed: ' + err.message +
+        logger.warning('notifier: /var/log/ltm emission failed: ' + err.message +
           (stderr ? ' stderr=' + stderr.trim() : ''));
       } else {
         logger.info('notifier: /var/log/ltm entry written for ' + payload.event +
@@ -152,7 +152,7 @@ function _emitSyslog(payload) {
       { timeout: 5000 },
       function (err, stdout, stderr) {
         if (err) {
-          logger.warn('notifier: /var/log/audit emission failed: ' + err.message +
+          logger.warning('notifier: /var/log/audit emission failed: ' + err.message +
             (stderr ? ' stderr=' + stderr.trim() : ''));
         } else {
           logger.info('notifier: /var/log/audit entry written for ' + payload.event +
@@ -216,14 +216,14 @@ function testSyslog(cb) {
 function _emitWebhook(payload, url, secret, dataDir, appendAuditFn, attempt) {
   _sendWebhookOnce(payload, url, secret, function (err) {
     if (!err) {
-      logger.debug('notifier: webhook delivered on attempt ' + attempt);
+      logger.fine('notifier: webhook delivered on attempt ' + attempt);
       return;
     }
 
     var cfg = settings.getAll();
 
     if (cfg.debugMode) {
-      logger.warn('notifier: webhook attempt ' + attempt + ' failed: ' + err.message);
+      logger.warning('notifier: webhook attempt ' + attempt + ' failed: ' + err.message);
     }
 
     if (attempt < _RETRY_ATTEMPTS) {
@@ -236,7 +236,7 @@ function _emitWebhook(payload, url, secret, dataDir, appendAuditFn, attempt) {
     // All attempts exhausted
     var failMsg = 'Webhook delivery failed after ' + _RETRY_ATTEMPTS +
       ' attempts: ' + err.message;
-    logger.error('notifier: ' + failMsg);
+    logger.severe('notifier: ' + failMsg);
 
     // Write failure to audit log so operators can see it
     if (dataDir && appendAuditFn) {

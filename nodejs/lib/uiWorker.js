@@ -83,7 +83,7 @@ UiWorker.prototype.onGet = function (restOperation) {
   var ext      = path.extname(filePath).toLowerCase();
   var mimeType = MIME_TYPES[ext] || 'application/octet-stream';
 
-  logger.debug('UiWorker: serving ' + filePath);
+  logger.fine('UiWorker: serving ' + filePath);
 
   fs.readFile(filePath, function (err, data) {
     if (err) {
@@ -91,7 +91,7 @@ UiWorker.prototype.onGet = function (restOperation) {
         restOperation.setStatusCode(404);
         restOperation.setBody({ error: 'File not found: ' + relative });
       } else {
-        logger.error('UiWorker: readFile error: ' + err.message);
+        logger.severe('UiWorker: readFile error: ' + err.message);
         restOperation.setStatusCode(500);
         restOperation.setBody({ error: 'Internal error reading file' });
       }

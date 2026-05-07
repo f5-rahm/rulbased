@@ -56,6 +56,44 @@ infrastructure.
 
 ---
 
+## Maintenance updates since 2.1.0
+
+### Phase 8.5 — Deploy path repair + logger fix (in-place; still 2.1.0)
+
+Two pre-existing bugs were repaired without bumping the version. No
+user-visible feature changes.
+
+- **Deploy path: iControl REST PATCH → tmsh load merge.** Some iRules
+  that the BIG-IP GUI accepts (and `tmm` parses fine at runtime) were
+  rejected by iControl REST's `apiAnonymous` validator with `incomplete
+  command` errors — F5 Bug ID 657977 and related parser strictness on
+  balanced-brace content. `bigipClient.deployRule` now writes the iRule
+  body wrapped in `ltm rule /<p>/<n> { ... }` to a per-deploy unique
+  `/tmp/rulbased-merge-<ts>-<rand>.tcl` file and runs `tmsh load sys
+  config merge file <path>` via `POST /mgmt/tm/util/bash`. The merge
+  goes through the same parser the GUI uses, so anything the GUI
+  accepts deploys cleanly. After the merge succeeds, the rule is read
+  back and SHA-1-compared against the submitted body to confirm what
+  `tmm` loaded matches what was sent (whitespace-only diffs are
+  tolerated; semantic mismatches fail the deploy). The temp file is
+  always cleaned up. Audit/syslog/webhook surfaces are unchanged.
+- **logger.js routes through `f5-logger.getInstance()` now.** Previous
+  versions checked for a global named `logger`, which doesn't exist in
+  iControl LX (per-worker `self.logger` is the framework's pattern, not
+  a global). The check always failed, fell through to `console`, and
+  every helper-module log line went to `/var/tmp/restnoded.out` instead
+  of `/var/log/restnoded/restnoded.log`. Helper modules now use the
+  documented `require('f5-logger').getInstance()` pattern. Method names
+  also realigned with f5-logger and `self.logger`: `logger.warn` →
+  `logger.warning`, `logger.error` → `logger.severe`, `logger.debug` →
+  `logger.fine` (info unchanged). A single `grep ' - severe:'` against
+  restnoded.log now surfaces errors from every layer.
+
+See `PLANNING.md` → Phase 8.5 for full diagnosis, the dead ends, and
+the lessons learned.
+
+---
+
 ## Contents
 
 - [Features](#features)
@@ -84,7 +122,7 @@ infrastructure.
 - Scheduled polling for external changes (default: every 5 minutes)
 - REST API: list rules, version history, fetch content, diff, manual snapshot
 - Embedded summary widget in BIG-IP TMUI
-- iControl REST write path (`PATCH /mgmt/tm/ltm/rule`) — no tmsh permission issues
+- iControl REST write path — _superseded in Phase 8.5; see "Maintenance updates since 2.1.0" above_
 - Append-only audit log (JSON Lines)
 
 ### Phase 2 — Full-page GUI
@@ -221,17 +259,19 @@ rulbased/
 ├── nodejs/
 │   ├── index.js                 ← restnoded entry point
 │   └── lib/
-│       ├── bigipClient.js       ← iControl REST reads + writes via localhost:8100
+│       ├── bigipClient.js       ← iControl REST reads via localhost:8100;
+│       │                          deploy via tmsh load merge through bash util
 │       ├── blockUtil.js         ← iApps LX state transition helpers
 │       ├── configProcessor.js   ← iApps LX block lifecycle
-│       ├── logger.js            ← restnoded logger wrapper
+│       ├── logger.js            ← f5-logger wrapper (info/warning/severe/fine/config)
 │       ├── migrations.js        ← schema migration framework (Phase 6)
 │       ├── notifier.js          ← syslog + webhook notifications
 │       ├── pollWorker.js        ← scheduled change detection
 │       ├── rulesWorker.js       ← REST API: /rules/*
 │       ├── settings.js          ← in-memory settings with persistence
 │       ├── settingsWorker.js    ← REST API: /settings + /settings/test-*
-│       ├── tmsh.js              ← tmsh child process wrapper
+│       ├── tmsh.js              ← legacy child-process wrapper, no longer in
+│       │                          deploy path; retained for reference
 │       ├── uiWorker.js          ← static file server: /ui/*
 │       └── versionStore.js      ← filesystem version store
 ├── presentation/
@@ -242,7 +282,7 @@ rulbased/
 │   ├── bundle-codemirror.sh     ← build-machine script for CodeMirror vendor bundle
 │   └── install-rpm.sh           ← upload and install on BIG-IP
 └── test/
-    ├── unit.js                  ← unit tests (16 passing, no framework required)
+    ├── unit.js                  ← unit tests (37 passing, no framework required)
     └── test-external-change.sh  ← end-to-end external change detection test
 ```
 
@@ -609,16 +649,23 @@ created before Phase 6 without this field are treated as `acknowledged: true`.
 
 ```bash
 node test/unit.js
-# 16 tests, no framework, no BIG-IP required
+# 37 tests, no framework, no BIG-IP required
 ```
 
 ---
 
 ## Key design decisions
 
-**iControl REST for all reads and writes** — Reads use `GET ?$select=apiAnonymous`.
-Writes use `PATCH { "apiAnonymous": content }`. For new rules (404 on PATCH),
-falls back to `POST /mgmt/tm/ltm/rule`.
+**iControl REST for reads, tmsh load merge for writes.** Reads use
+`GET /mgmt/tm/ltm/rule?$select=apiAnonymous` via the localhost:8100 trusted
+channel. Writes use `tmsh load sys config merge file <path>` invoked via
+`POST /mgmt/tm/util/bash` — the iRule body is wrapped in an `ltm rule
+/<partition>/<name> { ... }` stanza and written to `/tmp/rulbased-merge-
+<ts>-<rand>.tcl` first. After-merge SHA-1 hash verification confirms what
+`tmm` loaded matches what was submitted. The merge path uses the same
+parser the GUI uses, so any iRule the GUI accepts deploys cleanly. See
+PLANNING.md → Phase 8.5 for the full history of why this replaced an
+earlier `PATCH apiAnonymous` design (F5 Bug ID 657977).
 
 **Deploy errors use HTTP 200 with `{ ok: false, error }`** — restnoded intercepts
 and transforms non-2xx responses before they reach the browser, making the body
@@ -634,6 +681,14 @@ auto-deduplicates.
 
 **CodeMirror inlined** — Full bundle inlined into `app.html`.
 
-**TCL syntax validation** — iControl REST validates TCL when `apiAnonymous` is
-submitted. Errors returned as 4xx with the TCL error message. No pre-validation
-endpoint exists; "incomplete command" indicates an unclosed `{` block.
+**Logging via `f5-logger.getInstance()`** — helper modules acquire the logger
+through the documented `require('f5-logger').getInstance()` pattern. Method
+names match f5-logger and `self.logger` exactly: `info`, `warning`, `severe`,
+`fine`, `config`. Outside restnoded (e.g. running unit tests) the wrapper
+falls back to a console-backed shim that produces the same line format.
+
+**TCL syntax validation** — `tmsh load merge` rejects malformed iRules with
+the same error format the BIG-IP CLI produces (e.g. `01070151:3: Rule
+[/Common/foo] error: incomplete command`). The mcpd error code prefix and
+`Rule [/p/n] error:` wrapper are stripped before display in the GUI; the
+useful content starts after both.

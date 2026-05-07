@@ -73,7 +73,7 @@ SettingsWorker.prototype.onPut = function (restOperation) {
     restOperation.setBody(settings.getAll());
     restOperation.complete();
   } catch (e) {
-    logger.error('SettingsWorker.onPut: ' + e.message);
+    logger.severe('SettingsWorker.onPut: ' + e.message);
     restOperation.setStatusCode(400);
     restOperation.setBody({ error: e.message });
     restOperation.complete();

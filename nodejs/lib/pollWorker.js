@@ -45,14 +45,14 @@ function stop() {
 
 function _poll() {
   if (_running) {
-    logger.debug('pollWorker: previous cycle still running, skipping tick');
+    logger.fine('pollWorker: previous cycle still running, skipping tick');
     return;
   }
   _running = true;
 
   bigipClient.listAllRules(function (err, liveRules) {
     if (err) {
-      logger.warn('pollWorker: tmsh.listAllRules failed: ' + err.message);
+      logger.warning('pollWorker: tmsh.listAllRules failed: ' + err.message);
       _running = false;
       return;
     }
@@ -118,7 +118,7 @@ function _poll() {
             'External change detected by poll', 'external', 'external-poll',
             function (saveErr) {
               if (saveErr) {
-                logger.warn('pollWorker: failed to save external change for ' + rule.fullPath + ': ' + saveErr.message);
+                logger.warning('pollWorker: failed to save external change for ' + rule.fullPath + ': ' + saveErr.message);
               }
               // Append to audit log
               versionStore.appendAudit(_dataDir, {

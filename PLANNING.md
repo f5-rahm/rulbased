@@ -152,16 +152,42 @@ support for both static iRules and per-device parameterised templates.
 - **iApps LX** (not iControl LX) — uses the block state machine, config
   processor lifecycle, and presentation layer
 - **Hybrid read/write strategy** — iControl REST via localhost trusted channel
-  for reads, tmsh for writes. Decided during Phase 1 implementation:
+  for reads, `tmsh load sys config merge` (invoked via `/mgmt/tm/util/bash`)
+  for writes. Note: this is the *current* strategy as of Phase 8.5. The
+  history is non-trivial — see "Deploy path history" below.
   - **Reads** (`listAllRules`, `getRuleContent`, `listPartitions`): use
     `GET http://localhost:8100/mgmt/tm/ltm/rule` via Node.js `http` module.
     restnoded running inside the BIG-IP management plane has implicit trust on
     the localhost:8100 channel — no credentials, no auth header, no tokens.
     The REST API returns `apiAnonymous` (clean TCL body, no tmsh metadata) and
     handles all partitions automatically, eliminating the need for a parser.
-  - **Writes** (`deployRule`, `saveConfig`): keep tmsh `load sys config merge`
-    + `save sys config` — the right tool for mutating config, battle-tested,
-    explicit persistence guarantee.
+  - **Writes** (`deployRule`): write the iRule body wrapped in an
+    `ltm rule /<partition>/<name> { ... }` stanza to a per-deploy unique
+    `/tmp/rulbased-merge-<ts>-<rand>.tcl` file (direct `fs.writeFileSync` —
+    no upload step, since restnoded runs on-box), then run
+    `tmsh load sys config merge file <path>` via
+    `POST /mgmt/tm/util/bash`. This sidesteps the home-directory /
+    history-file problem that prevents spawning tmsh as a child process from
+    restnoded (uid 198), and goes through the same parser the GUI uses, so
+    iRules accepted by the GUI are accepted on deploy. After-merge SHA-1
+    hash verification confirms the stored `apiAnonymous` matches what was
+    submitted; whitespace-only diffs are tolerated, semantic mismatches fail
+    the deploy. See Phase 8.5 lessons for why this replaced the iControl
+    REST PATCH `apiAnonymous` path.
+
+**Deploy path history (don't repeat the dead ends):**
+
+1. *Original Phase 1 plan* — `tmsh load merge` via `child_process.exec`.
+   Rejected during Phase 1 testing because tmsh exits 1 from the restnoded
+   user (uid 198) due to `~/.tmsh-history-root` write failures.
+2. *Phase 1 ship* — `PATCH /mgmt/tm/ltm/rule/~P~N { "apiAnonymous": content }`
+   via the localhost:8100 trusted channel. Worked for most iRules, until…
+3. *Phase 8.5* — discovered that iControl REST's `apiAnonymous` validator
+   (F5 Bug ID 657977) rejects iRules the GUI accepts and `tmm` parses fine
+   at runtime, with `incomplete command` errors on balanced-brace content.
+   Returned to `tmsh load merge` but invoked via `/mgmt/tm/util/bash`
+   instead of `child_process` — which avoids the history-file problem
+   entirely because the bash util endpoint runs as root.
 - **No credentials stored or passed anywhere** — the localhost:8100 trusted
   channel requires no auth; tmsh runs as the process user (root under restnoded)
 - **No npm dependencies** — Node.js built-ins only (`fs`, `path`, `crypto`,
@@ -736,6 +762,13 @@ Deliverables completed:
   (Phase 3) but is no longer in the deploy path. `bigipClient.js` now owns both
   reads and writes.
 
+  **⚠ SUPERSEDED by Phase 8.5.** The iControl REST `apiAnonymous` validator
+  rejects iRules that the GUI accepts and tmm parses fine at runtime (F5 Bug
+  ID 657977 and related parser strictness). `deployRule` was reverted to
+  `tmsh load sys config merge`, but invoked via `POST /mgmt/tm/util/bash`
+  instead of `child_process` — which runs as root and avoids the
+  history-file problem entirely. See Phase 8.5 for full diagnosis.
+
 - **`0o600` is ES6 octal syntax — Node 6.9.1 silently treats it as `0`.** Any
   `fs.writeFile` call with `mode: 0o600` writes a file with mode 0 (unreadable).
   Use decimal `384` instead. Added to Node 6 constraints list.
@@ -1024,12 +1057,29 @@ overhaul with iRule creation, inline editing, and operator workflow improvements
   are returned as HTTP 4xx with the TCL error message. `apiAnonymousBase64` is only
   useful for importing pre-validated content.
 
+  **⚠ VERIFICATION CAVEAT (Phase 8.5):** Independent search through F5
+  clouddocs, DevCentral, and the iControl REST schema did not surface any
+  documentation for `apiAnonymousBase64` as a writable field on the
+  `ltm rule` endpoint. The behavior described in this lesson may apply to a
+  related field name, a different TMOS version, or have been observed in
+  passing rather than tested rigorously. Treat as unverified until someone
+  reproduces it on a live system. The Phase 8.5 deploy fix uses
+  `tmsh load merge` instead, which sidesteps the `apiAnonymous` validator
+  entirely without depending on this field.
+
 - **iControl REST `apiAnonymous` with an unclosed `{` returns "incomplete command"
   instead of enumerating all errors.** The TCL parser stops at the first incomplete
   command boundary (open brace at EOF). This is correct and unavoidable with plain
   `apiAnonymous` — there is no pre-validation endpoint. See Future Considerations
   for a proper multi-error approach. Current mitigation: translate "incomplete
   command" to a human-readable explanation in the GUI.
+
+  **Phase 8.5 update:** the `apiAnonymous` deploy path is no longer used —
+  `deployRule` now goes through `tmsh load merge` via `/mgmt/tm/util/bash`,
+  which uses the same parser the GUI uses. Genuinely-incomplete iRules
+  (unclosed `{`) still fail, but with the same message tmsh's CLI shows;
+  there's no longer a divergence between "iControl REST validator rejects"
+  and "tmm parser would accept." See Phase 8.5 lessons.
 
 - **`node --check` is available on the build machine and must be used before
   generating any patch script that touches Node.js files.** A syntax error in
@@ -1583,6 +1633,190 @@ point refinements within one release. All four patches are shipped as
   heredoc on patch 8; a tab→space mismatch in one of the insertion
   points on 8b) that would otherwise have tripped the health check and
   required a rollback
+
+---
+
+### Phase 8.5 — Deploy path repair + logger.js fix ✅ COMPLETE
+
+**Purpose:** in-place repair of two pre-existing bugs surfaced while testing
+a customer-supplied iRule (LOCALDB, a per-TMM subtable proc library) that
+deployed cleanly via the BIG-IP GUI but failed via Rülbased's
+`PATCH apiAnonymous` path. No new features, no version bump (still v2.1.0).
+Shipped as a single in-place patch script touching 12 files.
+
+**Bug 1 — iControl REST `apiAnonymous` rejects iRules the GUI accepts.**
+
+The `LOCALDB` iRule has 97 balanced top-level braces, no CRLF, no BOM, no
+non-ASCII content the wrapper couldn't handle. JSON.stringify round-trip is
+byte-identical (the user's initial hypothesis that "JSON formatting mangles
+the braces" was incorrect — JSON encodes string contents without modifying
+braces). The actual cause is iControl REST's pre-validator (mcpd-side)
+rejecting balanced-brace iRules where an event declaration is followed by
+`{` on the next line — F5 Bug ID 657977 (12.x–15.x, no fix listed; observed
+on 21.x as well). The GUI's "Update" button uses a different validation
+path that accepts this content, hence the asymmetric behavior.
+
+**Resolution:** revert to `tmsh load sys config merge file <path>` for
+deploys, but invoke it via `POST /mgmt/tm/util/bash` rather than
+`child_process.exec`. The bash util REST endpoint runs as root and
+sidesteps the original `~/.tmsh-history-root` write failure that caused
+Phase 1 to switch away from tmsh in the first place.
+
+Implementation in `bigipClient.deployRule`:
+
+1. Wrap the body in `ltm rule /<partition>/<name> {\r\n<body>\r\n}\r\n` —
+   matches the working pattern in F5's VS Code extension's `mergeTCL` flow.
+2. Write directly to `/tmp/rulbased-merge-<ts>-<rand>.tcl` via
+   `fs.writeFileSync` (mode `384` decimal = `0600` octal — Node 6 cannot
+   parse `0o600`). No upload step needed because we're on-box, unlike the
+   off-box VS Code extension.
+3. POST `{ command: "run", utilCmdArgs: "-c 'tmsh load sys config merge
+   file /tmp/<file>'" }` to `/mgmt/tm/util/bash`.
+4. Parse `commandResult` for tmsh errors with anchored regex (matches lines
+   beginning with the mcpd error code prefix `[0-9a-f]+:[0-9]+:`, or
+   containing `Syntax Error:`, or `:<line>: error:`). Loose `error|fail`
+   substring search rejected — would false-positive on iRule log strings
+   that contain the words "error" or "fail".
+5. On clean merge: GET the rule back and SHA-1-compare stored
+   `apiAnonymous` against the submitted body. Whitespace-only diffs are
+   tolerated (tmsh sometimes normalizes indentation); semantic mismatches
+   fail the deploy with `Post-merge hash verification failed`.
+6. Always `fs.unlinkSync` the temp file (best-effort) before returning,
+   on both success and failure paths.
+
+`rulesWorker.js` is unchanged — `deployRule(partition, name, content, cb)`
+keeps the same signature. Audit/syslog/webhook surfaces are untouched
+(notifier.js still uses `/usr/bin/logger -p local0.{notice,info} -t rulbased`
+for `/var/log/audit` and `/var/log/ltm` entries with byte-identical payload
+format; `versionStore.appendAudit` still writes `audit.jsonl` directly).
+
+**Bug 2 — `logger.js` silently routed every helper-module log line to
+/var/tmp/restnoded.out for the entire life of the project.**
+
+After patch 8.5a applied successfully (audit log confirmed `tmsh load merge
+file /tmp/rulbased-merge-...` ran with the unique filename our code
+produced, and the temp file was cleaned up correctly), zero
+`[Rülbased] bigipClient.deployRule: ...` log lines appeared in
+`/var/log/restnoded/restnoded.log`. Investigation revealed that NO log
+lines from any module-level `require('./logger')` had EVER appeared — only
+`self.logger.*` calls from inside RestWorker methods (`UiWorker started`,
+etc.) were ever visible.
+
+Root cause: `logger.js` checked `if (typeof logger !== 'undefined')` —
+looking for a global named `logger`. That global doesn't exist in iControl
+LX. The framework attaches a logger to *worker instances* (`self.logger`,
+`this.logger`), not the global namespace. The `typeof` check therefore
+always failed, fell through to `console`, and `console.log` from a
+restnoded child process is routed to `/var/tmp/restnoded.out` rather than
+`/var/log/restnoded/restnoded.log` (this is documented at
+clouddocs.f5.com/products/iapp/iapp-lx/.../create_icontrol_extension.html).
+
+**Resolution:** rewrite `logger.js` to use the documented helper-module
+pattern: `require('f5-logger').getInstance()`. Confirmed by F5's own AS3
+codebase (`f5-appsvcs-extension/src/lib/log.js`) and clouddocs.
+
+While fixing the routing, also align method names with f5-logger and the
+per-worker `self.logger` API:
+
+| Old name      | New name      | Reason                                |
+|---------------|---------------|---------------------------------------|
+| `logger.info` | `logger.info` | unchanged                             |
+| `logger.warn` | `logger.warning` | matches f5-logger and `self.logger` |
+| `logger.error`| `logger.severe`  | matches f5-logger and `self.logger` |
+| `logger.debug`| `logger.fine`    | matches f5-logger and `self.logger` |
+
+Now every log line in the codebase uses identical level vocabulary
+regardless of whether it originates in a worker or a helper module. A
+single grep against any level name (`grep ' - severe:'`, etc.) surfaces
+errors from every layer. 56 method-call call-sites were renamed across
+11 helper files; `self.logger.*` calls in workers were left untouched
+(they already used the right names).
+
+#### Phase 8.5 — As shipped
+
+Single patch script `patch-logger-rename.sh` modifying 12 files:
+
+- `nodejs/lib/bigipClient.js` — new `deployRule` via tmsh merge + helpers
+  (`_wrapAsTmshStanza`, `_writeMergeFile`, `_parseTmshError`, `_sha1`,
+  `_cleanupMergeFile`)
+- `nodejs/lib/logger.js` — rewritten to use `f5-logger.getInstance()`,
+  exposes `info`/`warning`/`severe`/`fine`/`config`
+- `nodejs/lib/{configProcessor,migrations,notifier,pollWorker,rulesWorker,
+  settings,settingsWorker,tmsh,uiWorker,versionStore}.js` — method-call
+  renames only (no logic changes)
+
+`test/unit.js` was updated locally to 37 tests (16 original + 14 deploy
+merge tests + 7 logger module tests) but is not shipped on-device since
+build-rpm.sh doesn't stage `test/`.
+
+#### Phase 8.5 — Lessons learned
+
+- **JSON encoding does not mangle iRule braces.** A common operator
+  hypothesis when REST PATCH fails on iRule deploy is that JSON encoding of
+  the `{ }` characters breaks something. It doesn't — JSON string-content
+  encoding is brace-transparent. Round-trip
+  `JSON.parse(JSON.stringify({ apiAnonymous: content })).apiAnonymous ===
+  content` for any UTF-8 string. When PATCH rejects content the GUI
+  accepts, the cause is the `apiAnonymous` pre-validator, not the JSON
+  layer.
+
+- **Three logging styles existed in the codebase before Phase 8.5:**
+  worker-instance `self.logger.severe(...)` (worked), module-level
+  `require('./logger').error(...)` (broken — went to /var/tmp/restnoded.out),
+  and direct `console.log` (also went to /var/tmp/restnoded.out). The
+  middle category was where most of the project's log instrumentation
+  lived, which is why operational debugging on this project has felt
+  uncannily quiet through Phases 1–8. The rename to f5-logger native
+  method names eliminates the middle category and makes debug output
+  uniform.
+
+- **The on-device install does not include `test/`.** `build-rpm.sh`
+  stages only `nodejs/`, `presentation/`, `manifest.json`, and
+  `block_template.json`. A patch script that tries to write `test/unit.js`
+  on-device fails with "No such file or directory" because the parent
+  directory was never created. Patches should ship only files that exist
+  in the deployed RPM tree; tests run on the build machine before patch
+  generation, not on-device.
+
+- **`/usr/bin/logger -p local0.<facility> -t <tag>` is the right pattern
+  for /var/log/audit and /var/log/ltm emission from restnoded.**
+  notifier.js's existing approach was correct and is unaffected by Phase
+  8.5. The two log destinations are filtered by syslog-ng:
+  `f_local0` routes `local0.*` to `/var/log/ltm`; `f_audit` routes
+  `local0.*` containing the literal "AUDIT" token to `/var/log/audit`.
+  Both filters fire for the same syslog message — that's how a single
+  `logger` invocation lands in two files. The Phase 8.5 patch verified
+  this end-to-end (audit log confirmed `cmd_data=load sys config merge
+  file /tmp/rulbased-merge-<id>.tcl`).
+
+- **F5 Bug ID 657977 has no listed fix as of TMOS 21.x.** The bug tracker
+  shows affected versions through 15.0.x with no "Fixed Versions" entry.
+  Assume any future deploy work that goes back through `apiAnonymous`
+  PATCH will hit the same balanced-brace rejection. The merge-via-bash
+  path is the durable solution.
+
+- **The F5 VS Code extension's `mergeTCL` is a useful reference for any
+  config-mutation workflow.** Pattern at
+  `vscode-f5/src/treeViewsProviders/tclTreeProvider.ts`. Five steps for
+  off-box use (upload → unix-mv → bash exec → result check → cleanup);
+  three steps for on-box use (write → bash exec → result check → cleanup).
+  The CRLF line endings in the wrapped stanza (`{\r\n<body>\r\n}`) come
+  from this reference and are required.
+
+- **Hash-verify after merge catches more than just whitespace
+  normalization.** It also catches the catastrophic case where a malformed
+  partition path causes the merge to land somewhere unexpected (e.g.,
+  partition typo silently creates the rule under `/Common/` regardless of
+  intent). Whitespace-only diffs (collapsed runs of spaces/tabs/newlines
+  produce identical stripped strings) are downgraded to a warning;
+  semantic mismatches fail the deploy outright.
+
+- **`require('f5-logger').getInstance()` is the documented and
+  battle-tested helper-module logging pattern.** When in doubt, look at
+  `f5-appsvcs-extension/src/lib/log.js` — F5's own production AS3 code
+  uses exactly this pattern with a try/catch fallback for unit-test
+  environments. There is no other pattern that works for non-RestWorker
+  modules.
 
 ---
 

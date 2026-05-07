@@ -16,6 +16,7 @@ var path   = require('path');
 
 var bigipClient = require('../nodejs/lib/bigipClient');
 var versionStore = require('../nodejs/lib/versionStore');
+var rulbasedLogger = require('../nodejs/lib/logger');
 
 var PASS = 0;
 var FAIL = 0;
@@ -210,6 +211,306 @@ asyncTest('getRuleContent returns empty string when apiAnonymous absent', functi
     if (err) { return done(err); }
     if (content !== '') { return done(new Error('expected empty string, got: ' + content)); }
     done();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logger module — f5-logger.getInstance() with console-shim fallback
+// ---------------------------------------------------------------------------
+
+console.log('\nlogger module');
+
+test('logger module exposes f5-logger native method names', function () {
+  // info, warning, severe, fine, config — matching f5-logger and the
+  // per-worker self.logger API exactly. NOT warn/error/debug — those were
+  // the old wrapper's Node-style names that diverged from f5-logger and
+  // caused the silent-routing-to-console bug.
+  assert.strictEqual(typeof rulbasedLogger.info, 'function');
+  assert.strictEqual(typeof rulbasedLogger.warning, 'function');
+  assert.strictEqual(typeof rulbasedLogger.severe, 'function');
+  assert.strictEqual(typeof rulbasedLogger.fine, 'function');
+  assert.strictEqual(typeof rulbasedLogger.config, 'function');
+});
+
+test('logger module does NOT expose the old warn/error/debug names', function () {
+  // Defensive — guards against accidental restoration of the old API,
+  // which would let callers compile but log to the wrong place.
+  assert.strictEqual(rulbasedLogger.warn,  undefined);
+  assert.strictEqual(rulbasedLogger.error, undefined);
+  assert.strictEqual(rulbasedLogger.debug, undefined);
+});
+
+test('logger fallback shim is selected outside restnoded (test env)', function () {
+  // Outside restnoded, require('f5-logger') throws MODULE_NOT_FOUND, so
+  // _underlying() returns the console-shim object — not console itself,
+  // not f5-logger. The shim has the same method names f5-logger does.
+  var L = rulbasedLogger._underlying();
+  assert.notStrictEqual(L, console, 'should not be raw console');
+  assert.strictEqual(typeof L.info, 'function');
+  assert.strictEqual(typeof L.warning, 'function');
+  assert.strictEqual(typeof L.severe, 'function');
+  assert.strictEqual(typeof L.fine, 'function');
+});
+
+test('logger.info routes through underlying logger with [Rülbased] prefix', function () {
+  var captured = null;
+  var origLog = console.log;
+  console.log = function (msg) { captured = msg; };
+  try {
+    rulbasedLogger.info('test message');
+  } finally {
+    console.log = origLog;
+  }
+  assert.ok(captured !== null, 'info call did not reach console.log via shim');
+  assert.ok(captured.indexOf('[Rülbased] test message') !== -1, 'expected prefix+msg, got: ' + captured);
+  // Shim format mirrors restnoded: "<date> - <level>: <msg>"
+  assert.ok(/ - info: /.test(captured), 'expected " - info: " separator, got: ' + captured);
+});
+
+test('logger.severe formats with severe: level prefix', function () {
+  var captured = null;
+  var origLog = console.log;
+  console.log = function (msg) { captured = msg; };
+  try {
+    rulbasedLogger.severe('something broke');
+  } finally {
+    console.log = origLog;
+  }
+  assert.ok(captured !== null);
+  assert.ok(/ - severe: /.test(captured), 'expected " - severe: ", got: ' + captured);
+  assert.ok(captured.indexOf('[Rülbased] something broke') !== -1);
+});
+
+test('logger.warning formats with warning: level prefix', function () {
+  var captured = null;
+  var origLog = console.log;
+  console.log = function (msg) { captured = msg; };
+  try {
+    rulbasedLogger.warning('uh oh');
+  } finally {
+    console.log = origLog;
+  }
+  assert.ok(captured !== null);
+  assert.ok(/ - warning: /.test(captured));
+});
+
+test('logger.fine formats with fine: level prefix', function () {
+  var captured = null;
+  var origLog = console.log;
+  console.log = function (msg) { captured = msg; };
+  try {
+    rulbasedLogger.fine('detail');
+  } finally {
+    console.log = origLog;
+  }
+  assert.ok(captured !== null);
+  assert.ok(/ - fine: /.test(captured));
+});
+
+// ---------------------------------------------------------------------------
+// bigipClient — deployRule via tmsh load merge
+// ---------------------------------------------------------------------------
+
+console.log('\nbigipClient deployRule (tmsh load merge)');
+
+test('_wrapAsTmshStanza wraps body with partition-qualified path and CRLF', function () {
+  var s = bigipClient._wrapAsTmshStanza('Common', 'foo', 'when X { }');
+  assert.strictEqual(s, 'ltm rule /Common/foo {\r\nwhen X { }\r\n}\r\n');
+});
+
+test('_wrapAsTmshStanza preserves multi-line content unchanged', function () {
+  var body = 'when RULE_INIT {\n    set x 1\n}';
+  var s = bigipClient._wrapAsTmshStanza('MyPart', 'bar', body);
+  assert.ok(s.indexOf('ltm rule /MyPart/bar {') === 0);
+  assert.ok(s.indexOf(body) !== -1);
+  assert.ok(s.charAt(s.length - 1) === '\n');
+});
+
+test('_parseTmshError returns null on empty / clean output', function () {
+  assert.strictEqual(bigipClient._parseTmshError(''), null);
+  assert.strictEqual(bigipClient._parseTmshError(null), null);
+  assert.strictEqual(bigipClient._parseTmshError('Loading configuration...\nDone.'), null);
+});
+
+test('_parseTmshError detects mcpd-style error code prefix', function () {
+  var out = '01070151:3: Rule [/Common/foo] error: invalid event "BOGUS"';
+  var err = bigipClient._parseTmshError(out);
+  assert.ok(err instanceof Error, 'expected Error');
+  // mcpd code prefix and Rule wrapper should be stripped to match GUI format
+  assert.strictEqual(err.message, 'invalid event "BOGUS"');
+});
+
+test('_parseTmshError detects Syntax Error from tmsh parser', function () {
+  var out = '/tmp/rulbased-merge-x.tcl:5: Syntax Error: unexpected token';
+  var err = bigipClient._parseTmshError(out);
+  assert.ok(err instanceof Error);
+  assert.ok(err.message.indexOf('Syntax Error') !== -1);
+});
+
+test('_parseTmshError does NOT false-positive on iRule log strings containing "error"', function () {
+  // tmsh returns log output unrelated to deploy success/failure
+  var out = 'Loading...\nlog local0. "user got an error message"\nDone.';
+  assert.strictEqual(bigipClient._parseTmshError(out), null);
+});
+
+test('_parseTmshError joins multiple error lines with newlines', function () {
+  var out = '01070151:3: Rule [/Common/a] error: first\n01070151:3: Rule [/Common/a] error: second';
+  var err = bigipClient._parseTmshError(out);
+  assert.strictEqual(err.message, 'first\nsecond');
+});
+
+test('_writeMergeFile produces a unique, readable /tmp/ path', function () {
+  var fpath1 = bigipClient._writeMergeFile('Common', 'r1', 'when X { }');
+  var fpath2 = bigipClient._writeMergeFile('Common', 'r1', 'when X { }');
+  try {
+    assert.ok(fpath1.indexOf('/tmp/rulbased-merge-') === 0, 'path under /tmp/');
+    assert.ok(fpath1.endsWith('.tcl'), 'tcl extension');
+    assert.notStrictEqual(fpath1, fpath2, 'two writes produce distinct paths');
+    var contents = fs.readFileSync(fpath1, 'utf8');
+    assert.ok(contents.indexOf('ltm rule /Common/r1 {') === 0);
+    assert.ok(contents.indexOf('when X { }') !== -1);
+  } finally {
+    try { fs.unlinkSync(fpath1); } catch (e) {}
+    try { fs.unlinkSync(fpath2); } catch (e) {}
+  }
+});
+
+asyncTest('deployRule succeeds: tmsh merge clean + hash matches readback', function (done) {
+  var origPost = bigipClient._post;
+  var origGet = bigipClient._get;
+  var capturedBash = null;
+  bigipClient._post = function (urlPath, body, cb) {
+    capturedBash = { urlPath: urlPath, body: body };
+    cb(null, { commandResult: '' }); // tmsh merge says nothing on success
+  };
+  bigipClient._get = function (reqPath, cb) {
+    cb(null, { apiAnonymous: 'when X { pool p }' });
+  };
+  bigipClient.deployRule('Common', 'r1', 'when X { pool p }', function (err) {
+    bigipClient._post = origPost;
+    bigipClient._get = origGet;
+    if (err) { return done(err); }
+    if (!capturedBash) { return done(new Error('bash POST not called')); }
+    if (capturedBash.urlPath !== '/mgmt/tm/util/bash') {
+      return done(new Error('wrong endpoint: ' + capturedBash.urlPath));
+    }
+    if (capturedBash.body.utilCmdArgs.indexOf('tmsh load sys config merge file /tmp/rulbased-merge-') === -1) {
+      return done(new Error('wrong tmsh command: ' + capturedBash.body.utilCmdArgs));
+    }
+    done();
+  });
+});
+
+asyncTest('deployRule surfaces tmsh parse error from commandResult', function (done) {
+  var origPost = bigipClient._post;
+  bigipClient._post = function (urlPath, body, cb) {
+    cb(null, {
+      commandResult: '01070151:3: Rule [/Common/r2] error: incomplete command'
+    });
+  };
+  bigipClient.deployRule('Common', 'r2', 'when X {', function (err) {
+    bigipClient._post = origPost;
+    if (!err) { return done(new Error('expected tmsh error to surface')); }
+    if (err.message.indexOf('incomplete command') === -1) {
+      return done(new Error('expected cleaned message, got: ' + err.message));
+    }
+    // the mcpd code prefix should be stripped
+    if (err.message.indexOf('01070151') !== -1) {
+      return done(new Error('mcpd code prefix not stripped: ' + err.message));
+    }
+    done();
+  });
+});
+
+asyncTest('deployRule succeeds when whitespace-only diff is detected on readback', function (done) {
+  var origPost = bigipClient._post;
+  var origGet = bigipClient._get;
+  bigipClient._post = function (urlPath, body, cb) { cb(null, { commandResult: '' }); };
+  // tmsh stored a normalized version with collapsed indentation
+  bigipClient._get = function (reqPath, cb) {
+    cb(null, { apiAnonymous: 'when X { pool p }' });
+  };
+  // Sent body has tabs/extra spaces that tmsh collapsed
+  var sent = 'when X {\t pool p\n}';
+  bigipClient.deployRule('Common', 'r3', sent, function (err) {
+    bigipClient._post = origPost;
+    bigipClient._get = origGet;
+    // Whitespace-only diff is a warning, not a failure
+    if (err) { return done(new Error('whitespace diff should not fail: ' + err.message)); }
+    done();
+  });
+});
+
+asyncTest('deployRule fails when readback content differs semantically (wrong rule landed)', function (done) {
+  var origPost = bigipClient._post;
+  var origGet = bigipClient._get;
+  bigipClient._post = function (urlPath, body, cb) { cb(null, { commandResult: '' }); };
+  bigipClient._get = function (reqPath, cb) {
+    cb(null, { apiAnonymous: 'when X { pool DIFFERENT_pool }' });
+  };
+  bigipClient.deployRule('Common', 'r4', 'when X { pool original_pool }', function (err) {
+    bigipClient._post = origPost;
+    bigipClient._get = origGet;
+    if (!err) { return done(new Error('expected hash-verify failure')); }
+    if (err.message.indexOf('hash verification failed') === -1) {
+      return done(new Error('expected hash error, got: ' + err.message));
+    }
+    done();
+  });
+});
+
+asyncTest('deployRule still succeeds when readback GET fails (does not block on verify)', function (done) {
+  var origPost = bigipClient._post;
+  var origGet = bigipClient._get;
+  bigipClient._post = function (urlPath, body, cb) { cb(null, { commandResult: '' }); };
+  bigipClient._get = function (reqPath, cb) { cb(new Error('connection refused')); };
+  bigipClient.deployRule('Common', 'r5', 'when X { }', function (err) {
+    bigipClient._post = origPost;
+    bigipClient._get = origGet;
+    // tmsh said merge worked; readback is best-effort, so deploy still wins
+    if (err) { return done(new Error('readback failure should not fail deploy: ' + err.message)); }
+    done();
+  });
+});
+
+asyncTest('deployRule cleans up the temp file on success and on failure', function (done) {
+  var origPost = bigipClient._post;
+  var origGet = bigipClient._get;
+  var capturedSuccess = null;
+  var capturedFailure = null;
+  // Capture the temp file path tmsh was told to load (extract from utilCmdArgs)
+  function extractFileFromBash(body) {
+    var m = body.utilCmdArgs.match(/(\/tmp\/rulbased-merge-[^']+\.tcl)/);
+    return m ? m[1] : null;
+  }
+  // First: success path
+  bigipClient._post = function (urlPath, body, cb) {
+    capturedSuccess = extractFileFromBash(body);
+    cb(null, { commandResult: '' });
+  };
+  bigipClient._get = function (reqPath, cb) { cb(null, { apiAnonymous: 'when X { }' }); };
+  bigipClient.deployRule('Common', 'r6a', 'when X { }', function (err) {
+    if (err) { bigipClient._post = origPost; bigipClient._get = origGet; return done(err); }
+    if (!capturedSuccess) { bigipClient._post = origPost; bigipClient._get = origGet; return done(new Error('no temp path captured')); }
+    if (fs.existsSync(capturedSuccess)) {
+      bigipClient._post = origPost; bigipClient._get = origGet;
+      return done(new Error('temp file leaked on success: ' + capturedSuccess));
+    }
+    // Now: failure path
+    bigipClient._post = function (urlPath, body, cb) {
+      capturedFailure = extractFileFromBash(body);
+      cb(null, { commandResult: '01070151:3: error: bad' });
+    };
+    bigipClient.deployRule('Common', 'r6b', 'when X {', function (err2) {
+      bigipClient._post = origPost;
+      bigipClient._get = origGet;
+      if (!err2) { return done(new Error('expected failure on bad merge')); }
+      if (!capturedFailure) { return done(new Error('no temp path captured for failure case')); }
+      if (fs.existsSync(capturedFailure)) {
+        return done(new Error('temp file leaked on failure: ' + capturedFailure));
+      }
+      done();
+    });
   });
 });
 

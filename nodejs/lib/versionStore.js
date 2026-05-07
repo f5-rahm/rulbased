@@ -124,7 +124,7 @@ function baselineSnapshot(rules, dataDir, optsOrCb, maybeCb) {
       saveVersion(dataDir, rule.partition, rule.name, rule.content,
         'Baseline snapshot', 'system', 'baseline', function (saveErr) {
           if (saveErr) {
-            logger.warn('baselineSnapshot: failed for ' + rule.fullPath + ': ' + saveErr.message);
+            logger.warning('baselineSnapshot: failed for ' + rule.fullPath + ': ' + saveErr.message);
           } else {
             count++;
           }
@@ -171,7 +171,7 @@ function saveVersion(dataDir, partition, name, content, message, author, source,
       // Deduplicate: if most recent version has the same hash, skip
       if (manifest.versions.length > 0 &&
           manifest.versions[manifest.versions.length - 1].hash === hash) {
-        logger.debug('saveVersion: no change for ' + partition + '/' + name + ' (hash=' + hash + ')');
+        logger.fine('saveVersion: no change for ' + partition + '/' + name + ' (hash=' + hash + ')');
         return cb(null, manifest.versions[manifest.versions.length - 1]);
       }
 
@@ -200,7 +200,7 @@ function saveVersion(dataDir, partition, name, content, message, author, source,
           if (retentionTrimmed) {
             var migrations = require('./migrations');
             migrations.pruneOrphanedBlobs(ruleDir, function (pruneErr, pruned) {
-              if (pruneErr) { logger.warn('saveVersion: blob prune error: ' + pruneErr.message); }
+              if (pruneErr) { logger.warning('saveVersion: blob prune error: ' + pruneErr.message); }
               else if (pruned > 0) { logger.info('saveVersion: pruned ' + pruned + ' orphaned blob(s) in ' + ruleDir); }
               cb(null, entry);
             });
@@ -327,7 +327,7 @@ function exportArchive(dataDir, destPath, cb) {
     timeout: 60000
   }, function (err, stdout, stderr) {
     if (err) {
-      logger.error('exportArchive: tar failed: ' + (stderr || err.message));
+      logger.severe('exportArchive: tar failed: ' + (stderr || err.message));
       return cb(new Error('tar export failed: ' + (stderr || err.message)));
     }
     logger.info('exportArchive: success, wrote ' + destPath);
@@ -451,7 +451,7 @@ function appendAudit(dataDir, entry, cb) {
   var auditFile = path.join(dataDir, 'audit.jsonl');
   var line = JSON.stringify(entry) + '\n';
   fs.appendFile(auditFile, line, function (err) {
-    if (err) { logger.warn('appendAudit failed: ' + err.message); }
+    if (err) { logger.warning('appendAudit failed: ' + err.message); }
     if (cb) { cb(null); }
   });
 }
@@ -1040,7 +1040,7 @@ function acknowledgeAll(dataDir, liveRules, cb) {
       m.acknowledged = true;
       _saveManifest(dataDir, m.partition, m.name, m, function (saveErr) {
         if (saveErr) {
-          logger.warn('acknowledgeAll: save failed for ' + key + ': ' + saveErr.message);
+          logger.warning('acknowledgeAll: save failed for ' + key + ': ' + saveErr.message);
         } else {
           acknowledged++;
         }

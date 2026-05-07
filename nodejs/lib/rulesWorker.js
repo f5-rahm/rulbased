@@ -543,7 +543,7 @@ function _exportData(dataDir, restOperation) {
     var s = fs.statSync(backupDir);
     if (s && s.isDirectory()) { backupDirAvailable = true; }
   } catch (e) {
-    logger.warn('RulesWorker._exportData: backup dir missing — on-device copy disabled. ' +
+    logger.warning('RulesWorker._exportData: backup dir missing — on-device copy disabled. ' +
       'Run build/post-install.sh to create ' + backupDir + '. (stat: ' + e.message + ')');
   }
 
@@ -601,16 +601,16 @@ function _exportData(dataDir, restOperation) {
           return;
         }
         // rename failed - try copy then unlink
-        logger.debug('RulesWorker._exportData: rename failed (' + renameErr.message + '), trying copy');
+        logger.fine('RulesWorker._exportData: rename failed (' + renameErr.message + '), trying copy');
         fs.readFile(tmpPath, function (readErr2, buf2) {
           if (readErr2) {
-            logger.warn('RulesWorker._exportData: could not read tmpPath for copy: ' + readErr2.message);
+            logger.warning('RulesWorker._exportData: could not read tmpPath for copy: ' + readErr2.message);
             fs.unlink(tmpPath, function () {});
             return;
           }
           fs.writeFile(backupPath, buf2, function (cpErr) {
             if (cpErr) {
-              logger.warn('RulesWorker._exportData: could not save to ' + backupPath + ': ' + cpErr.message);
+              logger.warning('RulesWorker._exportData: could not save to ' + backupPath + ': ' + cpErr.message);
             } else {
               logger.info('RulesWorker._exportData: saved on-device copy to ' + backupPath);
             }
@@ -717,7 +717,7 @@ function _finishTask(task, lockKey, errMsg, result) {
   if (errMsg) {
     task.status = 'failed';
     task.error = errMsg;
-    logger.error('Deploy task ' + task.taskId + ' failed: ' + errMsg);
+    logger.severe('Deploy task ' + task.taskId + ' failed: ' + errMsg);
   } else {
     task.status = 'completed';
     task.result = result;
@@ -788,7 +788,7 @@ function _deployVersion(dataDir, partition, name, body, restOperation) {
           }
           versionStore.saveVersion(dataDir, partition, name, content,
             reason, author, 'tool-deploy', function (saveErr, version) {
-              if (saveErr) { logger.warn('Deploy succeeded but post-deploy snapshot failed: ' + saveErr.message); }
+              if (saveErr) { logger.warning('Deploy succeeded but post-deploy snapshot failed: ' + saveErr.message); }
               var auditEntry = {
                 ts: new Date().toISOString(),
                 author: author,
@@ -844,7 +844,7 @@ function _acknowledgeAll(dataDir, body, restOperation) {
       // Don't hard-fail — acknowledge without drift detection.  Worst case,
       // a drifted rule gets acknowledged and the operator sees it turn back
       // to NEW on the next poll, which is safe.
-      logger.warn('_acknowledgeAll: listAllRules failed, proceeding without drift check: ' + listErr.message);
+      logger.warning('_acknowledgeAll: listAllRules failed, proceeding without drift check: ' + listErr.message);
       liveRules = {};
     }
 
@@ -898,7 +898,7 @@ function _deleteRuleFromStore(dataDir, partition, name, restOperation) {
     childProcess.execFile('/bin/rm', ['-rf', ruleDir], { timeout: 15000 },
       function (rmErr, stdout, stderr) {
         if (rmErr) {
-          logger.error('_deleteRuleFromStore: rm failed: ' + (stderr || rmErr.message));
+          logger.severe('_deleteRuleFromStore: rm failed: ' + (stderr || rmErr.message));
           return _error(restOperation, 500,
             'Failed to remove rule directory: ' + (stderr || rmErr.message));
         }
@@ -1004,7 +1004,7 @@ function _extractQuery(uri) {
 }
 
 function _error(restOperation, code, message) {
-  logger.error('RulesWorker error ' + code + ': ' + message);
+  logger.severe('RulesWorker error ' + code + ': ' + message);
   restOperation.setStatusCode(code);
   restOperation.setBody({ error: message });
   restOperation.complete();

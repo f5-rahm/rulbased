@@ -44,7 +44,7 @@ ConfigProcessor.prototype.onPost = function (restOperation) {
   // Initialise the version store on disk
   versionStore.init(dataDir, function (initErr) {
     if (initErr) {
-      logger.error('ConfigProcessor.onPost: versionStore.init failed: ' + initErr.message);
+      logger.severe('ConfigProcessor.onPost: versionStore.init failed: ' + initErr.message);
       blockUtil.setError(restOperation, 'Failed to initialise data directory: ' + initErr.message);
       return;
     }
@@ -52,7 +52,7 @@ ConfigProcessor.prototype.onPost = function (restOperation) {
     // Take baseline snapshots of every iRule currently on the system
     bigipClient.listAllRules(function (listErr, rules) {
       if (listErr) {
-        logger.error('ConfigProcessor.onPost: tmsh.listAllRules failed: ' + listErr.message);
+        logger.severe('ConfigProcessor.onPost: tmsh.listAllRules failed: ' + listErr.message);
         blockUtil.setError(restOperation, 'Failed to list iRules: ' + listErr.message);
         return;
       }
@@ -62,7 +62,7 @@ ConfigProcessor.prototype.onPost = function (restOperation) {
 
       versionStore.baselineSnapshot(rules, dataDir, function (snapErr, count) {
         if (snapErr) {
-          logger.error('ConfigProcessor.onPost: baseline snapshot failed: ' + snapErr.message);
+          logger.severe('ConfigProcessor.onPost: baseline snapshot failed: ' + snapErr.message);
           blockUtil.setError(restOperation, 'Baseline snapshot failed: ' + snapErr.message);
           return;
         }

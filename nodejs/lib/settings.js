@@ -75,14 +75,14 @@ function load(dataDir) {
     });
     logger.info('settings: loaded from ' + settingsFile);
   } catch (e) {
-    logger.debug('settings: no settings file found, using defaults');
+    logger.fine('settings: no settings file found, using defaults');
   }
 }
 
 function _persist() {
   var settingsFile = path.join(_current.dataDirectory, 'settings.json');
   fs.writeFile(settingsFile, JSON.stringify(_current, null, 2), { encoding: 'utf8' }, function (err) {
-    if (err) { logger.warn('settings: failed to persist: ' + err.message); }
+    if (err) { logger.warning('settings: failed to persist: ' + err.message); }
   });
 }
 

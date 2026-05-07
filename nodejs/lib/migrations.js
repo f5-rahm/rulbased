@@ -52,7 +52,7 @@ function migration_1(dataDir, cb) {
       var ruleDir = ruleDirs[idx++];
       _pruneOrphanedBlobs(ruleDir, function (pruneErr, count) {
         if (pruneErr) {
-          logger.warn('migrations: blob sweep error in ' + ruleDir + ': ' + pruneErr.message);
+          logger.warning('migrations: blob sweep error in ' + ruleDir + ': ' + pruneErr.message);
         } else {
           totalPruned += count;
         }
@@ -85,7 +85,7 @@ var MIGRATIONS = [
 function run(dataDir, settingsMod, cb) {
   var storedVersion = _readSchemaVersion(settingsMod);
   if (storedVersion >= CURRENT_SCHEMA_VERSION) {
-    logger.debug('migrations: schema up to date (v' + storedVersion + ')');
+    logger.fine('migrations: schema up to date (v' + storedVersion + ')');
     return cb(null);
   }
 
@@ -101,7 +101,7 @@ function run(dataDir, settingsMod, cb) {
         settingsMod.update({ schemaVersion: CURRENT_SCHEMA_VERSION });
         logger.info('migrations: schema version updated to v' + CURRENT_SCHEMA_VERSION);
       } catch (e) {
-        logger.warn('migrations: could not persist schemaVersion: ' + e.message);
+        logger.warning('migrations: could not persist schemaVersion: ' + e.message);
       }
       return cb(null);
     }
@@ -109,7 +109,7 @@ function run(dataDir, settingsMod, cb) {
     logger.info('migrations: running migration to v' + migration.version);
     migration.fn(dataDir, function (err) {
       if (err) {
-        logger.error('migrations: migration to v' + migration.version + ' failed: ' + err.message);
+        logger.severe('migrations: migration to v' + migration.version + ' failed: ' + err.message);
         return cb(err);
       }
       next();
@@ -175,10 +175,10 @@ function _pruneOrphanedBlobs(ruleDir, cb) {
         var filePath = path.join(ruleDir, orphans[idx++]);
         fs.unlink(filePath, function (unlinkErr) {
           if (unlinkErr) {
-            logger.warn('migrations: could not unlink orphan ' + filePath + ': ' + unlinkErr.message);
+            logger.warning('migrations: could not unlink orphan ' + filePath + ': ' + unlinkErr.message);
           } else {
             pruned++;
-            logger.debug('migrations: pruned orphan ' + filePath);
+            logger.fine('migrations: pruned orphan ' + filePath);
           }
           next();
         });
