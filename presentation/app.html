@@ -2303,7 +2303,7 @@ function _tclLinter(text) {
           from: CodeMirror.Pos(i, hits[h].from || 0),
           to: CodeMirror.Pos(i, hits[h].to || lines[i].length),
           message: '[' + rule.id + '] ' + hits[h].message,
-          severity: (mode === 'strict') ? 'error' : rule.severity
+          severity: (mode === 'strict' && rule.severity === 'warning') ? 'error' : rule.severity
         });
       }
     }
