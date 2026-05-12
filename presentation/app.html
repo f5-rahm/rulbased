@@ -2678,8 +2678,21 @@ function _runLint(cm) {
 
 function _makeLintGutterMarker(severity, annotations) {
   var el = document.createElement('div');
-  el.className = 'CodeMirror-lint-marker-' + severity;
   el.style.cursor = 'pointer';
+  el.style.fontSize = '14px';
+  el.style.lineHeight = '16px';
+  el.style.textAlign = 'center';
+  el.style.width = '16px';
+  if (severity === 'error') {
+    el.textContent = '\u2716';  // heavy X
+    el.style.color = '#dc2626';
+  } else if (severity === 'warning') {
+    el.textContent = '\u26A0';  // warning triangle
+    el.style.color = '#d97706';
+  } else {
+    el.textContent = '\u24D8';  // circled i
+    el.style.color = '#2563eb';
+  }
   // Build tooltip text
   var tips = [];
   for (var i = 0; i < annotations.length; i++) {
