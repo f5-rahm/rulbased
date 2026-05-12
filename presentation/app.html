@@ -1265,9 +1265,10 @@ span.CodeMirror-selectedtext { background: none; }
           <label style="font-size:11px;font-weight:600;color:var(--text-sub)">Reason for change <span style="color:#dc2626">*</span></label>
           <textarea id="deploy-inline-reason" placeholder="e.g. CR-1234 -- Adding HSTS header per security review"></textarea>
           <div id="deploy-inline-btns">
+            <button id="btn-inline-validate" style="background:var(--bg);border:1px solid var(--border)">&#x2713; Validate</button>
             <button id="btn-inline-deploy" disabled style="background:var(--success);color:#fff">&#128190; Save &amp; Deploy</button>
             <button id="btn-inline-cancel" style="background:var(--bg);border:1px solid var(--border)">&#x2715; Cancel</button>
-            <span class="reason-hint">Required. Ctrl+Enter to deploy.</span>
+            <span class="reason-hint">Reason required. Ctrl+Enter to deploy.</span>
           </div>
         </div>
       </div>
@@ -1432,16 +1433,8 @@ span.CodeMirror-selectedtext { background: none; }
             <option value="off">Off</option>
           </select>
         </div>
-        <div class="s-row" style="margin-top:6px">
-          <label for="s-preflight">Pre-flight validation</label>
-          <select id="s-preflight">
-            <option value="optional">Optional (default)</option>
-            <option value="always">Always (run before every deploy)</option>
-            <option value="required">Required (block deploy until validated)</option>
-          </select>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
-          Pre-flight creates a throwaway rule on the BIG-IP to validate TCL syntax, then deletes it immediately.
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px">
+          Deploy always validates TCL syntax first (creates a throwaway rule, checks, deletes). Use the Validate button in the editor to check syntax without deploying.
         </div>
         <div style="margin-top:8px">
           <div style="font-size:11px;font-weight:600;cursor:pointer" id="s-lint-rules-toggle">Per-rule toggles &#x25B6;</div>
@@ -2541,15 +2534,24 @@ _registerLintRule('inline-comment', 'info', 'Inline comment', function(line, lin
   return hits;
 });
 
-/* Rule 14: commented-code — #<non-space> likely commented-out code */
+/* Rule 14: commented-code — #<command> where command is a known TCL/iRules keyword */
+var _tclCommands = (
+  'set unset if else elseif for foreach while switch proc return break continue ' +
+  'catch expr eval puts log append lappend lindex llength lsearch lsort lrange ' +
+  'lreplace string regexp regsub scan format split join incr array global variable ' +
+  'upvar uplevel namespace package rename info after clock open close read gets ' +
+  'flush eof seek tell socket binary encoding subst list dict concat source load ' +
+  'pool node snat snatpool table persist event call class findstr getfield whereis ' +
+  'substr decode_uri b64decode b64encode hsl'
+).split(' ');
 _registerLintRule('commented-code', 'info', 'Commented-out code', function(line, lineNo) {
   var hits = [];
-  var m = line.match(/^(\s*)#([^ \t\n#!])/);
-  if (m) {
+  var m = line.match(/^(\s*)#([a-zA-Z_]\w*)/);
+  if (m && _tclCommands.indexOf(m[2].toLowerCase()) !== -1) {
     hits.push({
       from: m[1].length,
       to: line.length,
-      message: 'Looks like commented-out code (no space after #); remove or add a space for a real comment'
+      message: 'Looks like commented-out code (#' + m[2] + '); remove or add a space for a real comment'
     });
   }
   return hits;
@@ -3598,7 +3600,7 @@ function confirmDeploy() {
   if (p.editedContent) {
     var partition = r.partition || 'Common';
     btn.innerHTML = '<span class="spinner"></span>Validating…';
-    _maybePreflightThenDeploy(partition, p.editedContent, function (preErr) {
+    _preflightValidate(partition, p.editedContent, function (preErr) {
       if (preErr) {
         btn.disabled = false;
         btn.textContent = 'Save & Deploy';
@@ -3987,7 +3989,6 @@ function openSettings() {
     document.getElementById('s-hidesys').checked   = (s.hideSystemRules !== false); // default true
     // Phase 9: lint settings
     document.getElementById('s-lintmode').value = s.lintMode || 'warn';
-    document.getElementById('s-preflight').value = s.preflightValidation || 'optional';
     _populateLintRuleToggles(s.lintRules || {});
     document.getElementById('settings-overlay').style.display = 'block';
   });
@@ -4112,28 +4113,46 @@ function _clearDeployError() {
 /* --------------------------------------------------------------------------
    Inline deploy panel (below editor)
 -------------------------------------------------------------------------- */
-function _maybePreflightThenDeploy(partition, content, cb) {
-  var mode = (S.settings && S.settings.preflightValidation) || 'optional';
-  if (S.settings && S.settings.debugMode) {
-    console.log('[iRV] preflight mode=' + mode);
-  }
-  if (mode === 'optional') { return cb(null); }
-
+function _preflightValidate(partition, content, cb) {
   POST('/rules/validate', { content: content, partition: partition }, function (err, data) {
     if (S.settings && S.settings.debugMode) {
       console.log('[iRV] preflight result: err=' + err + ' data=' + JSON.stringify(data));
     }
     if (err) {
-      if (mode === 'required') { return cb('Pre-flight check unavailable: ' + err); }
-      return cb(null);
+      return cb('Pre-flight validation unavailable: ' + err);
     }
     if (data && !data.ok) {
-      if (mode === 'required') { return cb(data.error); }
-      toast('warning', 'Pre-flight warning', _formatTclError(data.error));
-    } else if (data && data.ok) {
-      toast('success', 'Pre-flight passed', 'TCL syntax validated successfully.');
+      return cb(data.error);
     }
     cb(null);
+  });
+}
+
+function _executeInlineValidate() {
+  var r = S.rule;
+  if (!r || !S.editor) { return; }
+  var content = S.editor.getValue();
+  if (!content || !content.trim()) {
+    toast('warning', 'Empty content', 'Cannot validate an empty iRule.');
+    return;
+  }
+  var btn = document.getElementById('btn-inline-validate');
+  var errEl = document.getElementById('deploy-inline-error');
+  btn.disabled = true;
+  btn.textContent = 'Validating…';
+  errEl.style.display = 'none';
+
+  var partition = r.partition || 'Common';
+  _preflightValidate(partition, content, function (err) {
+    btn.disabled = false;
+    btn.textContent = '\u2713 Validate';
+    if (err) {
+      errEl.textContent = _formatTclError(err);
+      errEl.style.display = 'block';
+      toast('error', 'Validation failed', 'TCL syntax error found.');
+    } else {
+      toast('success', 'Validation passed', 'TCL syntax is valid.');
+    }
   });
 }
 
@@ -4154,7 +4173,7 @@ function _executeInlineDeploy() {
   errEl.style.display = 'none';
 
   var partition = r.partition || 'Common';
-  _maybePreflightThenDeploy(partition, content, function (preErr) {
+  _preflightValidate(partition, content, function (preErr) {
     if (preErr) {
       btn.disabled = false;
       btn.textContent = 'Save & Deploy';
@@ -4181,7 +4200,7 @@ function _executeInlineDeploy() {
         if (wasNew) { PUT('/rules/' + rp(r) + '/acknowledge', {}, function () {}); }
         _refreshRuleAfterDeploy(r);
       });
-  }); // end _maybePreflightThenDeploy
+  }); // end _preflightValidate
 }
 
 /* --------------------------------------------------------------------------
@@ -4488,7 +4507,6 @@ function saveSettings() {
     theme:                theme,
     hideSystemRules:      nextHideSys,
     lintMode:             document.getElementById('s-lintmode').value,
-    preflightValidation:  document.getElementById('s-preflight').value,
     lintRules:            _collectLintRuleToggles()
   };
   var sec = document.getElementById('s-wsecret').value;
@@ -4503,7 +4521,6 @@ function saveSettings() {
       S.settings.theme               = p.theme;
       S.settings.hideSystemRules     = p.hideSystemRules;
       S.settings.lintMode            = p.lintMode;
-      S.settings.preflightValidation = p.preflightValidation;
       S.settings.lintRules           = p.lintRules;
       _applyEditorSettings();
       _refreshLint();
@@ -4713,6 +4730,7 @@ document.addEventListener('DOMContentLoaded', function () {
     S.settings.theme = this.value;
     applyTheme();
   };
+  document.getElementById('btn-inline-validate').onclick = _executeInlineValidate;
   document.getElementById('btn-inline-deploy').onclick = _executeInlineDeploy;
   document.getElementById('btn-inline-cancel').onclick = function () { setEditMode(false); };
   document.getElementById('deploy-inline-reason').addEventListener('input', function () {

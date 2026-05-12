@@ -1015,11 +1015,6 @@ function _extractQuery(uri) {
 // Pre-flight validation (Phase 9.2b)
 // ---------------------------------------------------------------------------
 function _validateRule(body, restOperation) {
-  var cfg = settings.getAll();
-  if (cfg.preflightValidation === 'off') {
-    return _error(restOperation, 404, 'Pre-flight validation is disabled');
-  }
-
   var content = body.content;
   if (!content || typeof content !== 'string' || !content.trim()) {
     return _error(restOperation, 400, 'content is required');
