@@ -23,7 +23,7 @@
 #   BIGIP_PASS=${{ secrets.BIGIP_ADMIN_PASS }} bash ./build/install-rpm.sh ...
 #
 # Example (interactive):
-#   bash ./build/install-rpm.sh 192.168.1.245 admin build/dist/rulbased-2.0.0-0001.noarch.rpm
+#   bash ./build/install-rpm.sh 192.168.1.245 admin build/dist/rulbased-2.2.0-0001.noarch.rpm
 #   Password for admin@192.168.1.245: ******
 #
 # Prerequisites:

@@ -69,7 +69,7 @@ BUNDLE_JS="$TMP_DIR/bundle_raw.js"
 cat > "$BUNDLE_JS" <<'HEADER'
 /*!
  * CodeMirror 5 bundle for Rülbased
- * Includes: core + TCL mode + matchbrackets + show-hint
+ * Includes: core + TCL mode + matchbrackets + show-hint + lint
  * License: MIT — https://codemirror.net/LICENSE
  */
 HEADER
@@ -80,6 +80,7 @@ cat "$CM_SRC/lib/codemirror.js" >> "$BUNDLE_JS"
 # Addons needed
 cat "$CM_SRC/addon/edit/matchbrackets.js" >> "$BUNDLE_JS"
 cat "$CM_SRC/addon/hint/show-hint.js"     >> "$BUNDLE_JS"
+cat "$CM_SRC/addon/lint/lint.js"           >> "$BUNDLE_JS"
 
 # TCL mode
 cat "$CM_SRC/mode/tcl/tcl.js" >> "$BUNDLE_JS"
@@ -92,6 +93,7 @@ BUNDLE_CSS="$TMP_DIR/bundle_raw.css"
 
 cat "$CM_SRC/lib/codemirror.css" > "$BUNDLE_CSS"
 cat "$CM_SRC/addon/hint/show-hint.css" >> "$BUNDLE_CSS"
+cat "$CM_SRC/addon/lint/lint.css"      >> "$BUNDLE_CSS"
 
 # ---------------------------------------------------------------------------
 # Step 4: Minify if uglify-js / cleancss are available, otherwise copy as-is

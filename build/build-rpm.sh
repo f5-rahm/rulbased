@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-2.0.0}"
+VERSION="${1:-2.2.0}"
 RELEASE="${2:-0001}"
 APP_NAME="rulbased"
 

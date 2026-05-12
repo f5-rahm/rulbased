@@ -33,6 +33,10 @@ var _defaults = {
   dashboardAuditLimit: 15,
   hideSystemRules: true,
   theme: 'auto',
+  lintMode: 'warn',
+  preflightValidation: 'optional',
+  webhookReceiverEnabled: false,
+  lintRules: {},
   schemaVersion: 0
 };
 
@@ -56,6 +60,18 @@ function update(values) {
       var t = values[k];
       if (t !== 'light' && t !== 'dark' && t !== 'auto') {
         throw new Error('theme must be one of: light, dark, auto');
+      }
+    }
+    if (k === 'lintMode') {
+      var lm = values[k];
+      if (lm !== 'strict' && lm !== 'warn' && lm !== 'off') {
+        throw new Error('lintMode must be one of: strict, warn, off');
+      }
+    }
+    if (k === 'preflightValidation') {
+      var pv = values[k];
+      if (pv !== 'always' && pv !== 'optional' && pv !== 'required') {
+        throw new Error('preflightValidation must be one of: always, optional, required');
       }
     }
     _current[k] = values[k];

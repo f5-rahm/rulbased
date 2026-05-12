@@ -1,0 +1,61 @@
+# test-good.irule — zero lint warnings expected across all 16 rules
+# This iRule follows every convention from the F5 iRules Style Guide.
+
+when RULE_INIT priority 500 {
+    # Application-scoped static variable with appname prefix
+    set static::myapp_debug 0
+    set static::myapp_pool "default_pool"
+}
+
+when HTTP_REQUEST priority 500 {
+    # Block-level comment at correct indent
+    set host [getfield [HTTP::host] ":" 1]
+    set uri [HTTP::uri]
+
+    # Properly braced variables everywhere
+    if { ${host} eq "example.com" } {
+        pool ${static::myapp_pool}
+    } elseif { ${host} eq "test.com" || ${host} eq "staging.com" } {
+        pool staging_pool
+    } else {
+        pool fallback_pool
+    }
+
+    # Braced expr to avoid double expansion
+    set result [expr { 3 + 4 }]
+    set flag 0
+
+    # Boolean state as 0/1
+    if { ${flag} && ${static::myapp_debug} } {
+        log local0.debug "debug enabled"
+    }
+
+    # Switch with -- terminator and 4-space indent
+    switch -- ${uri} {
+        "/api" {
+            # API routing
+            pool api_pool
+        }
+        "/health" {
+            # Health check
+            HTTP::respond 200 content "OK"
+        }
+        default {
+            # Default handler
+            pool ${static::myapp_pool}
+        }
+    }
+
+    # Table command with -- terminator
+    table set -- "${host}_counter" 1 300
+
+    # Foreach with braced list
+    foreach { item } { "a" "b" "c" } {
+        log local0.info "processing ${item}"
+    }
+
+    # For loop with proper spacing
+    for { set i 0 } { ${i} < 10 } { incr i } {
+        log local0.info "iteration ${i}"
+    }
+}

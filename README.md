@@ -293,8 +293,8 @@ rulbased/
 ### 1. Build the RPM on your local machine
 
 ```bash
-bash ./build/build-rpm.sh 2.0.0 0001
-# Output: build/dist/rulbased-2.0.0-0001.noarch.rpm
+bash ./build/build-rpm.sh 2.2.0 0001
+# Output: build/dist/rulbased-2.2.0-0001.noarch.rpm
 ```
 
 ### 2. Upload and install the RPM to BIG-IP
@@ -303,7 +303,7 @@ The install script will prompt for the BIG-IP password if it is not already
 set in the `BIGIP_PASS` environment variable:
 
 ```bash
-bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.0.0-0001.noarch.rpm
+bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.2.0-0001.noarch.rpm
 # Password for admin@<host>: ******
 ```
 
@@ -311,7 +311,7 @@ Or set `BIGIP_PASS` in the environment first (preferred for CI/CD):
 
 ```bash
 export BIGIP_PASS=<password>
-bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.0.0-0001.noarch.rpm
+bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.2.0-0001.noarch.rpm
 ```
 
 > **Use the BIG-IP `admin` account, not `root`.** BIG-IP blocks `root` from
@@ -376,7 +376,7 @@ https://<bigip>/mgmt/shared/rulbased/ui
 
 ```bash
 export BIGIP_PASS=<password>
-bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.0.0-0001.noarch.rpm
+bash ./build/install-rpm.sh <host> admin build/dist/rulbased-2.2.0-0001.noarch.rpm
 ```
 
 ### Before a TMOS version upgrade
@@ -432,14 +432,14 @@ curl -sk -u admin:$BIGIP_PASS https://<BIGIP>/mgmt/shared/iapp/global-installed-
 > The build-machine jq (macOS Homebrew, apt, brew, etc.) has regex support
 > and the `test()` form works fine there.
 
-You should get output like `rulbased-2.0.0-0001.noarch`.
+You should get output like `rulbased-2.2.0-0001.noarch`.
 
 ### Step 2: Submit the UNINSTALL task
 
 ```bash
 curl -sk -u admin:$BIGIP_PASS -H 'Content-Type: application/json' \
   -X POST https://<BIGIP>/mgmt/shared/iapp/package-management-tasks \
-  -d '{"operation":"UNINSTALL","packageName":"rulbased-2.0.0-0001.noarch"}' \
+  -d '{"operation":"UNINSTALL","packageName":"rulbased-2.2.0-0001.noarch"}' \
   | jq .
 ```
 
