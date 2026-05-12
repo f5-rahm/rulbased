@@ -3615,6 +3615,14 @@ function confirmDeploy() {
   // Inline editor path: content provided, deploy+snapshot in one POST
   if (p.editedContent) {
     var partition = r.partition || 'Common';
+    // Check lint first (strict mode blocks on warnings)
+    var lintErr = _checkLintBlocking(p.editedContent);
+    if (lintErr) {
+      btn.disabled = false;
+      btn.textContent = 'Save & Deploy';
+      _showDeployError(lintErr);
+      return;
+    }
     btn.innerHTML = '<span class="spinner"></span>Validating…';
     _preflightValidate(partition, p.editedContent, function (preErr) {
       if (preErr) {
@@ -4144,6 +4152,34 @@ function _preflightValidate(partition, content, cb) {
   });
 }
 
+/**
+ * Check lint annotations for blocking issues.
+ * In strict mode, warnings are promoted to errors and block.
+ * Info-level annotations never block.
+ * Returns an error message string if blocked, null if clear.
+ */
+function _checkLintBlocking(content) {
+  var mode = (S.settings && S.settings.lintMode) || 'warn';
+  if (mode === 'off') { return null; }
+  var annotations = _tclLinter(content);
+  if (!annotations || annotations.length === 0) { return null; }
+
+  // In strict mode, any warning-severity annotation blocks
+  if (mode === 'strict') {
+    var errors = [];
+    for (var i = 0; i < annotations.length; i++) {
+      // Original severity is warning (info never blocks)
+      if (annotations[i].severity === 'error') {
+        errors.push(annotations[i].message);
+      }
+    }
+    if (errors.length > 0) {
+      return 'Lint errors (' + errors.length + '):\n' + errors.join('\n');
+    }
+  }
+  return null;
+}
+
 function _executeInlineValidate() {
   var r = S.rule;
   if (!r || !S.editor) { return; }
@@ -4158,6 +4194,18 @@ function _executeInlineValidate() {
   btn.textContent = 'Validating…';
   errEl.style.display = 'none';
 
+  // Step 1: check lint
+  var lintErr = _checkLintBlocking(content);
+  if (lintErr) {
+    btn.disabled = false;
+    btn.textContent = '\u2713 Validate';
+    errEl.textContent = lintErr;
+    errEl.style.display = 'block';
+    toast('error', 'Lint check failed', 'Fix lint errors before deploying.');
+    return;
+  }
+
+  // Step 2: server-side TCL syntax check
   var partition = r.partition || 'Common';
   _preflightValidate(partition, content, function (err) {
     btn.disabled = false;
@@ -4167,7 +4215,7 @@ function _executeInlineValidate() {
       errEl.style.display = 'block';
       toast('error', 'Validation failed', 'TCL syntax error found.');
     } else {
-      toast('success', 'Validation passed', 'TCL syntax is valid.');
+      toast('success', 'Validation passed', 'Lint clean and TCL syntax valid.');
     }
   });
 }
@@ -4188,6 +4236,17 @@ function _executeInlineDeploy() {
   btn.textContent = 'Validating...';
   errEl.style.display = 'none';
 
+  // Step 1: check lint (strict mode blocks on warnings)
+  var lintErr = _checkLintBlocking(content);
+  if (lintErr) {
+    btn.disabled = false;
+    btn.textContent = 'Save & Deploy';
+    errEl.textContent = lintErr;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  // Step 2: server-side TCL syntax check
   var partition = r.partition || 'Common';
   _preflightValidate(partition, content, function (preErr) {
     if (preErr) {
