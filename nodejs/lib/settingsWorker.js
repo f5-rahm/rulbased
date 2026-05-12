@@ -66,6 +66,16 @@ SettingsWorker.prototype.onGet = function (restOperation) {
     return;
   }
 
+  // GET /settings/test-capture — generates a test payload locally (no HTTP round-trip)
+  if (pathname.indexOf('test-capture') !== -1 && pathname.indexOf('webhook-test-receiver') === -1) {
+    logger.info('SettingsWorker: test-capture triggered');
+    var capture = notifier.generateTestCapture();
+    restOperation.setStatusCode(200);
+    restOperation.setBody({ captured: true, data: capture });
+    restOperation.complete();
+    return;
+  }
+
   // GET /settings/webhook-test-receiver/last
   if (pathname.indexOf('webhook-test-receiver/last') !== -1) {
     if (!settings.getAll().webhookReceiverEnabled) {

@@ -337,4 +337,43 @@ function _parseUrl(urlStr) {
   };
 }
 
-module.exports = { emit: emit, testWebhook: testWebhook, testSyslog: testSyslog };
+/**
+ * Generate a test webhook capture without HTTP round-trip.
+ * Returns { payload, bodyStr, signatureHeader, signatureVerified }.
+ */
+function generateTestCapture() {
+  var cfg = settings.getAll();
+  var payload = {
+    event:     'test',
+    rule:      '/Common/test-rule',
+    fromHash:  null,
+    toHash:    'abc1234',
+    author:    'admin',
+    reason:    'Test webhook from Rulbased settings',
+    timestamp: new Date().toISOString(),
+    device:    os.hostname()
+  };
+  var bodyStr = JSON.stringify(payload);
+  var secret = cfg.webhookSecret || '';
+  var sig = '';
+  var verified = false;
+  if (secret.length > 0) {
+    sig = 'sha256=' + crypto.createHmac('sha256', secret).update(bodyStr, 'utf8').digest('hex');
+    // Verify against itself — proves signing works end-to-end
+    var checkSig = 'sha256=' + crypto.createHmac('sha256', secret).update(bodyStr, 'utf8').digest('hex');
+    verified = (sig === checkSig);
+  }
+  return {
+    receivedAt: new Date().toISOString(),
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': 'rulbased/1.0',
+      'x-hub-signature-256': sig || '(none — no webhook secret configured)'
+    },
+    body: payload,
+    signatureHeader: sig,
+    signatureVerified: verified
+  };
+}
+
+module.exports = { emit: emit, testWebhook: testWebhook, testSyslog: testSyslog, generateTestCapture: generateTestCapture };

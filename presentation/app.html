@@ -1435,17 +1435,22 @@ span.CodeMirror-selectedtext { background: none; }
         </div>
         <div class="s-row" style="margin-top:10px">
           <label></label>
-          <button id="btn-test-webhook" style="font-size:12px;padding:4px 10px">Test Webhook</button>
+          <button id="btn-test-webhook" style="font-size:12px;padding:4px 10px">Send Test Webhook</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Sends a real HTTP POST to the Webhook URL above. Save settings first if you changed the URL or secret.
         </div>
         <div style="margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-alt,var(--bg))">
           <div style="font-size:11px;font-weight:700;color:var(--text-sub,#666);margin-bottom:4px">
-            Test Receiver <span style="font-weight:400;color:var(--text-muted,#999)">(demo / debugging tool)</span>
+            Preview Webhook Payload <span style="font-weight:400;color:var(--text-muted,#999)">(demo / debugging tool)</span>
           </div>
           <div style="font-size:10px;color:var(--text-muted,#999);margin-bottom:8px">
-            Captures the next webhook POST on a built-in loopback endpoint.
-            Shows full headers, body, and HMAC verification. No data is persisted to disk.
+            Generates a sample webhook payload and verifies the HMAC signature
+            using the configured secret. No external request is made. Useful for
+            demos and for verifying your webhook secret is correct before
+            configuring an external receiver.
           </div>
-          <button id="btn-capture-webhook" style="font-size:12px;padding:4px 10px">Capture with built-in receiver</button>
+          <button id="btn-capture-webhook" style="font-size:12px;padding:4px 10px">Preview Webhook Payload</button>
           <div id="webhook-capture-result" style="display:none;margin-top:10px"></div>
         </div>
       </div>
@@ -3896,6 +3901,8 @@ function openSettings() {
     document.getElementById('s-syslog').checked    = !!s.syslogEnabled;
     document.getElementById('s-webhook').value     = s.webhookUrl || '';
     document.getElementById('s-wsecret').value     = '';
+    document.getElementById('s-wsecret').placeholder = (s.webhookSecret && s.webhookSecret.length > 0)
+      ? '(secret saved — leave blank to keep)' : 'optional';
     document.getElementById('s-webhookdrift').checked = !!s.webhookOnDrift;
     document.getElementById('s-irulelinks').checked = !!s.iruleLinks;
     document.getElementById('s-tcllinks').checked  = !!s.tclManPageLinks;
@@ -3941,40 +3948,24 @@ function captureWebhook() {
   var btn = document.getElementById('btn-capture-webhook');
   var resultEl = document.getElementById('webhook-capture-result');
   btn.disabled = true;
-  btn.textContent = 'Setting up…';
+  btn.textContent = 'Generating…';
   resultEl.style.display = 'none';
 
-  var savedUrl = document.getElementById('s-webhook').value;
-  var receiverUrl = window.location.protocol + '//' + window.location.host +
-    '/mgmt/shared/rulbased/settings/webhook-test-receiver';
+  GET('/settings/test-capture', function (err, data) {
+    btn.disabled = false;
+    btn.textContent = 'Preview Webhook Payload';
 
-  PUT('/settings', { webhookReceiverEnabled: true, webhookUrl: receiverUrl }, function (err) {
     if (err) {
-      btn.disabled = false;
-      btn.textContent = 'Capture with built-in receiver';
-      toast('error', 'Capture setup failed', String(err));
+      resultEl.innerHTML = '<div style="color:#dc2626;font-size:12px">Failed: ' + esc(String(err)) + '</div>';
+      resultEl.style.display = 'block';
       return;
     }
-
-    btn.textContent = 'Firing test…';
-    GET('/settings/test-webhook', function () {
-      btn.textContent = 'Fetching capture…';
-      setTimeout(function () {
-        GET('/settings/webhook-test-receiver/last', function (err3, data) {
-          PUT('/settings', { webhookReceiverEnabled: false, webhookUrl: savedUrl }, function () {});
-          document.getElementById('s-webhook').value = savedUrl;
-          btn.disabled = false;
-          btn.textContent = 'Capture with built-in receiver';
-
-          if (data && data.captured) {
-            _showWebhookCapture(resultEl, data.data);
-          } else {
-            resultEl.innerHTML = '<div style="color:#dc2626;font-size:12px">No capture received. Check that the webhook secret is set.</div>';
-            resultEl.style.display = 'block';
-          }
-        });
-      }, 1500);
-    });
+    if (data && data.captured) {
+      _showWebhookCapture(resultEl, data.data);
+    } else {
+      resultEl.innerHTML = '<div style="color:#dc2626;font-size:12px">No payload generated.</div>';
+      resultEl.style.display = 'block';
+    }
   });
 }
 
