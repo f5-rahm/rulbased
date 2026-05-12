@@ -7,6 +7,29 @@ infrastructure.
 
 ---
 
+## What's new in 2.2
+
+- **TCL linter** — 16 client-side lint rules based on the F5 iRules Style
+  Guide. Checks for unbraced variables, missing event priorities, brace
+  placement, missing `--` terminators, `and`/`or` operators, single-line `if`,
+  and more. Gutter markers (warning triangles, info circles) with hover
+  tooltips. Three modes: `warn` (show markers), `strict` (block deploy), `off`.
+  Per-rule toggles in **Settings → Linting**.
+- **Pre-flight validation** — the **Validate** button in the editor creates a
+  throwaway rule on the BIG-IP to check TCL syntax, then deletes it
+  immediately. Deploy always validates first and blocks on failure.
+- **Tab/Shift-Tab indent** — Tab inserts 4 spaces (or bulk-indents a
+  selection), Shift-Tab outdents. Matches the F5 style guide's "indent 4
+  spaces, no tab characters" rule.
+- **Webhook preview** — **Preview Webhook Payload** in Settings generates a
+  sample event payload and verifies HMAC signing without making any HTTP
+  request. See [Testing webhooks](#testing-webhooks) for external receiver
+  setup.
+- **Comment style lint** — enforces the style guide's `# comment` (space for
+  real comments) vs `#command` (no space for commented-out code) convention.
+
+---
+
 ## What's new in 2.1
 
 - **Acknowledge all** — clear the `NEW` badge on every newly-baselined rule in
@@ -607,6 +630,98 @@ All endpoints are under `/mgmt/shared/rulbased/`.
 
 See Phase 5 section above — behaviour unchanged.
 
+### Testing webhooks
+
+Rülbased ships two ways to verify webhook functionality:
+
+**Preview Webhook Payload** (no external dependency)
+
+Open **Settings → Notifications** and click **Preview Webhook Payload** at the
+bottom. This generates a sample event payload server-side and displays it
+inline, including HMAC-SHA256 signature verification if a webhook secret is
+configured. No HTTP request is made — useful for verifying your secret is
+correct and seeing the exact payload format.
+
+**Send Test Webhook** (requires an external receiver)
+
+Set a **Webhook URL** and optionally a **Webhook HMAC secret**, save settings,
+then click **Send Test Webhook**. This fires a real HTTP POST to the configured
+URL with a synthetic `test` event. The receiver must be reachable from the
+BIG-IP management interface.
+
+For demos and lab testing, a simple netcat-based receiver can stand in for a
+real webhook destination. Save the script below as `webhook-listener.sh` on a
+jump host or lab machine reachable by the BIG-IP:
+
+```bash
+#!/usr/bin/env bash
+# webhook-listener.sh — minimal webhook receiver for Rülbased demos
+# Usage: bash webhook-listener.sh [port]
+# Default port: 9999
+PORT="${1:-9999}"
+echo "Listening for webhooks on port ${PORT}..."
+echo "Configure Rülbased webhook URL: http://$(hostname -f):${PORT}"
+echo "Press Ctrl+C to stop."
+echo ""
+while true; do
+  echo "=== $(date '+%Y-%m-%d %H:%M:%S') — waiting ==="
+  { read -r reqline; headers=""; body=""
+    while IFS= read -r line; do
+      line="${line%%$'\r'}"
+      [ -z "$line" ] && break
+      headers="${headers}${line}\n"
+    done
+    clength=$(echo -e "$headers" | grep -i '^content-length:' | awk '{print $2}' | tr -d '[:space:]')
+    if [ -n "$clength" ] && [ "$clength" -gt 0 ] 2>/dev/null; then
+      body=$(dd bs=1 count="$clength" 2>/dev/null)
+    fi
+    echo "$reqline"
+    echo -e "$headers" | grep -i "x-hub-signature\|content-type\|user-agent"
+    if [ -n "$body" ]; then
+      echo "$body" | python -m json.tool 2>/dev/null || echo "$body"
+    fi
+    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+  } < <(nc -l "$PORT")
+  echo ""
+done
+```
+
+**Demo setup:**
+
+1. On the jump host, start the listener:
+
+   ```bash
+   bash webhook-listener.sh 9999
+   ```
+
+2. In Rülbased **Settings → Notifications**:
+   - Set **Webhook URL** to `http://<jump-host>:9999`
+   - Set **Webhook HMAC secret** to any value (e.g., `demodemo`)
+   - Click **Save Settings**
+
+3. Click **Send Test Webhook** — the listener terminal should display the
+   payload with event `test` and the `X-Hub-Signature-256` header.
+
+4. Now edit and deploy an iRule — the listener shows a real `deploy` event
+   with the rule path, content hashes, author, reason, and timestamp.
+
+**Sample webhook payload:**
+
+```json
+{
+    "event": "deploy",
+    "rule": "/Common/my_irule",
+    "fromHash": "a1b2c3d4...",
+    "toHash": "f9e8d7c6...",
+    "author": "admin",
+    "reason": "CR-1234 — Adding HSTS header",
+    "timestamp": "2026-05-12T14:30:00.000Z",
+    "device": "bigip1.lab.local"
+}
+```
+
+Events: `deploy`, `rollback`, `external-change-detected`, `test`.
+
 ---
 
 ## Version store layout
@@ -641,6 +756,9 @@ created before Phase 6 without this field are treated as `acknowledged: true`.
 | `iruleLinks` | boolean | `true` | Click-to-docs for iRules events |
 | `tclManPageLinks` | boolean | `true` | Click-to-docs for TCL commands |
 | `debugMode` | boolean | `false` | Browser console logging |
+| `lintMode` | string | `"warn"` | `strict` (block deploy), `warn` (show only), `off` |
+| `lintRules` | object | `{}` | Per-rule overrides, e.g. `{"tab-character": false}` |
+| `webhookReceiverEnabled` | boolean | `false` | Enable built-in webhook test receiver |
 | `schemaVersion` | integer | `0` | Internal — managed by migrations.js |
 
 ---
@@ -649,7 +767,7 @@ created before Phase 6 without this field are treated as `acknowledged: true`.
 
 ```bash
 node test/unit.js
-# 37 tests, no framework, no BIG-IP required
+# 59 tests, no framework, no BIG-IP required
 ```
 
 ---
