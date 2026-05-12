@@ -2619,6 +2619,95 @@ _registerLintRule('static-no-prefix', 'warning', 'Static variable without app pr
 });
 
 /* --------------------------------------------------------------------------
+   Lint display engine — uses CM basic APIs (no lint addon required)
+-------------------------------------------------------------------------- */
+var _lintMarks = [];     // active TextMarker objects for underlines
+var _lintTimeout = null; // debounce timer
+
+function _attachLintHandler(cm) {
+  cm.on('change', function () {
+    if (_lintTimeout) { clearTimeout(_lintTimeout); }
+    _lintTimeout = setTimeout(function () { _runLint(cm); }, 400);
+  });
+}
+
+function _runLint(cm) {
+  // Clear previous markers
+  for (var i = 0; i < _lintMarks.length; i++) {
+    _lintMarks[i].clear();
+  }
+  _lintMarks = [];
+  cm.clearGutter('CodeMirror-lint-markers');
+
+  var text = cm.getValue();
+  if (!text) { return; }
+  var annotations = _tclLinter(text);
+  if (!annotations || annotations.length === 0) { return; }
+
+  // Group annotations by line for gutter markers
+  var byLine = {};
+  for (var a = 0; a < annotations.length; a++) {
+    var ann = annotations[a];
+    var lineNo = ann.from.line;
+    if (!byLine[lineNo]) { byLine[lineNo] = []; }
+    byLine[lineNo].push(ann);
+
+    // Underline the marked range
+    var cssClass = 'CodeMirror-lint-mark-' + (ann.severity || 'warning');
+    try {
+      var mark = cm.markText(ann.from, ann.to, { className: cssClass, title: ann.message });
+      _lintMarks.push(mark);
+    } catch (e) { /* skip invalid ranges */ }
+  }
+
+  // Set gutter markers
+  var lineNos = Object.keys(byLine);
+  for (var g = 0; g < lineNos.length; g++) {
+    var ln = parseInt(lineNos[g], 10);
+    var lineAnns = byLine[ln];
+    // Pick the worst severity for the gutter icon
+    var worst = 'info';
+    for (var w = 0; w < lineAnns.length; w++) {
+      if (lineAnns[w].severity === 'error') { worst = 'error'; break; }
+      if (lineAnns[w].severity === 'warning') { worst = 'warning'; }
+    }
+    var marker = _makeLintGutterMarker(worst, lineAnns);
+    cm.setGutterMarker(ln, 'CodeMirror-lint-markers', marker);
+  }
+}
+
+function _makeLintGutterMarker(severity, annotations) {
+  var el = document.createElement('div');
+  el.className = 'CodeMirror-lint-marker-' + severity;
+  el.style.cursor = 'pointer';
+  // Build tooltip text
+  var tips = [];
+  for (var i = 0; i < annotations.length; i++) {
+    tips.push(annotations[i].message);
+  }
+  var tipText = tips.join('\n');
+
+  // Tooltip on hover
+  var tooltip = null;
+  el.addEventListener('mouseenter', function (e) {
+    tooltip = document.createElement('div');
+    tooltip.className = 'CodeMirror-lint-tooltip';
+    tooltip.textContent = tipText;
+    tooltip.style.opacity = '1';
+    tooltip.style.left = (e.pageX + 10) + 'px';
+    tooltip.style.top = (e.pageY - 5) + 'px';
+    document.body.appendChild(tooltip);
+  });
+  el.addEventListener('mouseleave', function () {
+    if (tooltip && tooltip.parentNode) {
+      tooltip.parentNode.removeChild(tooltip);
+      tooltip = null;
+    }
+  });
+  return el;
+}
+
+/* --------------------------------------------------------------------------
    State
 -------------------------------------------------------------------------- */
 var S = {
@@ -2965,7 +3054,6 @@ function initEditor() {
     indentUnit: 4, tabSize: 4, indentWithTabs: false,
     readOnly: true, theme: 'default', viewportMargin: Infinity,
     gutters: ['CodeMirror-lint-markers', 'CodeMirror-linenumbers'],
-    lint: { getAnnotations: _tclLinter, async: false },
     extraKeys: {
       'Tab': function(cm) {
         if (cm.somethingSelected()) { cm.indentSelection('add'); }
@@ -2975,6 +3063,7 @@ function initEditor() {
     }
   });
   _attachIrulesFeatures(S.editor, true);
+  _attachLintHandler(S.editor);
 }
 
 function setEditorContent(content, editable) {
@@ -2983,6 +3072,7 @@ function setEditorContent(content, editable) {
   S.editor.setValue(content || '');
   S.editor.setOption('readOnly', !editable);
   S.editor.refresh();
+  _runLint(S.editor);
 }
 
 function setEditMode(on) {
@@ -3884,8 +3974,7 @@ function _collectLintRuleToggles() {
 
 function _refreshLint() {
   if (S.editor) {
-    S.editor.setOption('lint', false);
-    S.editor.setOption('lint', { getAnnotations: _tclLinter, async: false });
+    _runLint(S.editor);
   }
 }
 
@@ -4040,16 +4129,24 @@ function _clearDeployError() {
 -------------------------------------------------------------------------- */
 function _maybePreflightThenDeploy(partition, content, cb) {
   var mode = (S.settings && S.settings.preflightValidation) || 'optional';
+  if (S.settings && S.settings.debugMode) {
+    console.log('[iRV] preflight mode=' + mode);
+  }
   if (mode === 'optional') { return cb(null); }
 
   POST('/rules/validate', { content: content, partition: partition }, function (err, data) {
+    if (S.settings && S.settings.debugMode) {
+      console.log('[iRV] preflight result: err=' + err + ' data=' + JSON.stringify(data));
+    }
     if (err) {
       if (mode === 'required') { return cb('Pre-flight check unavailable: ' + err); }
       return cb(null);
     }
     if (data && !data.ok) {
       if (mode === 'required') { return cb(data.error); }
-      toast('warning', 'TCL validation warning', _formatTclError(data.error));
+      toast('warning', 'Pre-flight warning', _formatTclError(data.error));
+    } else if (data && data.ok) {
+      toast('success', 'Pre-flight passed', 'TCL syntax validated successfully.');
     }
     cb(null);
   });
