@@ -15,16 +15,13 @@ along the lines of:
 > I am building an iApps LX extension for BIG-IP called "Rülbased".
 > The attached PLANNING.md contains all spec decisions, data models, REST API
 > definitions, GUI specifications, and the current implementation status.
-> Phases 1–8.5 are complete and shipped at v2.1.0 (Phase 8 = UX improvements
-> v2.1.0; Phase 8.5 = in-place deploy-path repair + logger fix, no version
-> bump). The next phase is Phase 9: developer experience — Tab-key indent
-> in the CodeMirror editor, Layer-2 TCL static lint with create-check-delete
-> pre-flight validation, built-in webhook test receiver, and version-drift
-> cleanup. Phase 9 targets v2.2.0. Phase 10 is HA awareness (hybrid
-> push-on-write + periodic reconciliation, modeled on AS3's approach,
-> targeting v2.3.0), Phase 11 is final code review / security audit
-> (v2.4.0), and Phase 12 is optional GitHub integration. Please read the
-> planning doc and help me continue with Phase 9.
+> Phases 1–9 are complete. Phase 9 shipped at v2.2.0 with 16-rule TCL
+> linter, pre-flight validation, Tab indent/outdent, webhook preview,
+> and version-drift cleanup. The next phase is Phase 10: HA awareness
+> (hybrid push-on-write + periodic reconciliation, modeled on AS3's
+> approach, targeting v2.3.0), Phase 11 is final code review / security
+> audit (v2.4.0), and Phase 12 is optional GitHub integration. Please
+> read the planning doc and help me continue with Phase 10.
 
 Upload both this file and the latest phase source zip
 (or the current `rulbased-phase-8.5-files.tar.gz`) to give the new session
@@ -2258,6 +2255,43 @@ check-versions.sh + tests. Bundled with Phase 9 patch.
   audit found `2.0.0` / `2.1.0` references in seven different places
   out of sync with `configProcessor.VERSION`. Fixed in Phase 9 Feature
   9.4; `build/check-versions.sh` enforces going forward.
+
+#### Phase 9 — Lessons learned during implementation
+
+- **CodeMirror addons must be inlined if the core is inlined.** The
+  CodeMirror JS is embedded as a single inline `<script>` block in
+  app.html. Adding the lint addon to `bundle-codemirror.sh` doesn't
+  help unless the inline block is regenerated. Phase 9 solved this by
+  implementing a self-contained lint display engine using CM's basic
+  APIs (`setGutterMarker`, `markText`, `on('change')`) instead of
+  depending on the lint addon. Simpler and more reliable.
+- **Base64 data URI PNGs break when truncated.** The CM lint.css gutter
+  marker images were pasted from the addon source but some were
+  truncated, causing `ERR_INVALID_URL` errors. Replaced with Unicode
+  text symbols (⚠ ✖ ⓘ) and CSS `border-bottom` underlines — always
+  render, no external dependencies.
+- **restnoded enforces auth on all endpoints including localhost.**
+  The webhook test receiver's original design had the notifier POST
+  to itself via HTTP, but restnoded requires basic auth even on
+  `localhost:8100`. Fixed by adding a `test-capture` endpoint that
+  generates the payload and HMAC verification in-process — no HTTP
+  round-trip needed.
+- **Lint rules must skip string content.** The `f5-and-or` rule
+  initially flagged `and`/`or` inside log message strings. Fixed by
+  counting quote characters before the match position. Any rule that
+  matches keywords should use the same heuristic.
+- **Reduce settings complexity before shipping.** The original design
+  had two separate dropdowns (lint mode: warn/strict/off and
+  pre-flight: optional/always/required). Early testing showed this
+  was confusing. Simplified to: lint mode controls gutter display,
+  a standalone Validate button checks both lint and TCL syntax, and
+  deploy always validates. One dropdown instead of two, one workflow
+  instead of six mode combinations.
+- **Info-level annotations should never block.** When strict mode
+  promoted all severities to `error`, info-level hints (trailing
+  whitespace, comment style) incorrectly blocked deploy. The
+  promotion should only apply to `warning` → `error`, leaving
+  `info` unchanged.
 
 ---
 

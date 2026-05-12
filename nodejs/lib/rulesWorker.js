@@ -80,6 +80,9 @@ RulesWorker.prototype.onStart = function (success) {
           self.logger.warning('[Rülbased] RulesWorker.onStart: migration error (non-fatal): ' + migErr.message);
         }
 
+        // Phase 9: clean up any orphaned validate rules from crashed workers
+        _cleanupOrphanedValidateRules();
+
         // Check for existing partition subdirectories to decide whether to baseline
         var fsLocal = require('fs');
         var pathLocal = require('path');
@@ -230,6 +233,11 @@ RulesWorker.prototype.onPost = function (restOperation) {
   var dataDir = settings.getDataDir();
 
   logger.info('RulesWorker.onPost segments=' + JSON.stringify(segments));
+
+  // POST /rules/validate
+  if (segments.length === 1 && segments[0] === 'validate') {
+    return _validateRule(body, restOperation);
+  }
 
   // POST /rules/export
   if (segments.length === 1 && segments[0] === 'export') {
@@ -1001,6 +1009,79 @@ function _extractQuery(uri) {
     }
   });
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-flight validation (Phase 9.2b)
+// ---------------------------------------------------------------------------
+function _validateRule(body, restOperation) {
+  var content = body.content;
+  if (!content || typeof content !== 'string' || !content.trim()) {
+    return _error(restOperation, 400, 'content is required');
+  }
+
+  var partition = body.partition || 'Common';
+  var ts = Date.now();
+  var rand = Math.floor(Math.random() * 100000);
+  var tmpName = '_rulbased_validate_' + ts + '_' + rand;
+
+  logger.info('_validateRule: creating throwaway rule ' + partition + '/' + tmpName);
+
+  bigipClient.deployRule(partition, tmpName, content, function (deployErr) {
+    _deleteThrowawayRule(partition, tmpName, function () {
+      restOperation.setStatusCode(200);
+      if (deployErr) {
+        restOperation.setBody({ ok: false, error: deployErr.message, lintWarnings: [] });
+      } else {
+        restOperation.setBody({ ok: true, error: null, lintWarnings: [] });
+      }
+      restOperation.complete();
+    });
+  });
+}
+
+function _deleteThrowawayRule(partition, name, cb) {
+  var bashBody = {
+    command: 'run',
+    utilCmdArgs: "-c 'tmsh delete ltm rule /" + partition + "/" + name + "'"
+  };
+  var attempts = 0;
+  var maxAttempts = 3;
+
+  function tryDelete() {
+    attempts++;
+    bigipClient._post('/mgmt/tm/util/bash', bashBody, function (err) {
+      if (err && attempts < maxAttempts) {
+        setTimeout(tryDelete, 1000);
+        return;
+      }
+      if (err) {
+        logger.warning('_deleteThrowawayRule: failed to delete ' +
+          partition + '/' + name + ' after ' + maxAttempts + ' attempts: ' + err.message);
+      }
+      cb();
+    });
+  }
+  tryDelete();
+}
+
+function _cleanupOrphanedValidateRules() {
+  bigipClient.listAllRules(function (err, rules) {
+    if (err) { return; }
+    var cutoff = Date.now() - 600000; // 10 minutes
+    var keys = Object.keys(rules);
+    for (var i = 0; i < keys.length; i++) {
+      var rule = rules[keys[i]];
+      if (rule.name.indexOf('_rulbased_validate_') !== 0) { continue; }
+      var parts = rule.name.split('_');
+      // Name format: _rulbased_validate_<ts>_<rand>
+      var ts = parseInt(parts[3], 10);
+      if (isNaN(ts) || ts < cutoff) {
+        logger.info('Cleaning up orphaned validate rule: ' + rule.fullPath);
+        _deleteThrowawayRule(rule.partition, rule.name, function () {});
+      }
+    }
+  });
 }
 
 function _error(restOperation, code, message) {

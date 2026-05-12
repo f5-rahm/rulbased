@@ -645,6 +645,221 @@ asyncTest('baselineSnapshot skips rules with existing manifests', function (done
 });
 
 // ---------------------------------------------------------------------------
+// Phase 9: Settings validation tests
+// ---------------------------------------------------------------------------
+var settings = require('../nodejs/lib/settings');
+
+test('settings: accepts valid lintMode values', function () {
+  // Reset to defaults
+  settings.load(os.tmpdir());
+  settings.update({ lintMode: 'strict' });
+  assert.strictEqual(settings.getAll().lintMode, 'strict');
+  settings.update({ lintMode: 'warn' });
+  assert.strictEqual(settings.getAll().lintMode, 'warn');
+  settings.update({ lintMode: 'off' });
+  assert.strictEqual(settings.getAll().lintMode, 'off');
+});
+
+test('settings: rejects invalid lintMode', function () {
+  var threw = false;
+  try { settings.update({ lintMode: 'invalid' }); }
+  catch (e) { threw = true; }
+  assert.ok(threw, 'should throw for invalid lintMode');
+});
+
+test('settings: accepts valid preflightValidation values', function () {
+  settings.update({ preflightValidation: 'always' });
+  assert.strictEqual(settings.getAll().preflightValidation, 'always');
+  settings.update({ preflightValidation: 'optional' });
+  assert.strictEqual(settings.getAll().preflightValidation, 'optional');
+  settings.update({ preflightValidation: 'required' });
+  assert.strictEqual(settings.getAll().preflightValidation, 'required');
+});
+
+test('settings: rejects invalid preflightValidation', function () {
+  var threw = false;
+  try { settings.update({ preflightValidation: 'never' }); }
+  catch (e) { threw = true; }
+  assert.ok(threw, 'should throw for invalid preflightValidation');
+});
+
+test('settings: webhookReceiverEnabled defaults to false', function () {
+  assert.strictEqual(settings.getAll().webhookReceiverEnabled, false);
+});
+
+test('settings: lintRules defaults to empty object', function () {
+  var lr = settings.getAll().lintRules;
+  assert.ok(typeof lr === 'object' && Object.keys(lr).length === 0);
+});
+
+// ---------------------------------------------------------------------------
+// Phase 9: Lint rule tests (regex-based, matching the client-side rules)
+// ---------------------------------------------------------------------------
+
+// Lint rule test helpers — reimplements the regex checks from app.html
+// to validate against test-good.irule and test-bad.irule
+var testGoodContent = fs.readFileSync(path.join(__dirname, 'test-good.irule'), 'utf8');
+var testBadContent = fs.readFileSync(path.join(__dirname, 'test-bad.irule'), 'utf8');
+
+function countMatches(content, pattern, opts) {
+  opts = opts || {};
+  var lines = content.split('\n');
+  var count = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (/^\s*#/.test(line) && !opts.includeComments) { continue; }
+    if (pattern.test(line)) { count++; }
+  }
+  return count;
+}
+
+test('lint: test-bad.irule has unbraced-var violation', function () {
+  // $host_value without braces (not in a comment line)
+  var re = /\$([a-zA-Z_][a-zA-Z0-9_:]*)/g;
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i])) { continue; }
+    var m;
+    re.lastIndex = 0;
+    while ((m = re.exec(lines[i])) !== null) {
+      if (lines[i].charAt(m.index + 1) === '{') { continue; }
+      hits++;
+    }
+  }
+  assert.ok(hits >= 1, 'expected at least 1 unbraced-var hit, got ' + hits);
+});
+
+test('lint: test-bad.irule has unbraced-expr violation', function () {
+  assert.ok(countMatches(testBadContent, /\bexpr\s+[^{]/) >= 1);
+});
+
+test('lint: test-bad.irule has f5-and-or violation', function () {
+  assert.ok(countMatches(testBadContent, /\b(and|or)\b/) >= 1);
+});
+
+test('lint: test-bad.irule has oneline-if violation', function () {
+  assert.ok(countMatches(testBadContent, /\bif\s*\{[^}]*\}\s*\{[^}]*\}/) >= 1);
+});
+
+test('lint: test-bad.irule has multi-cmd-line violation', function () {
+  assert.ok(countMatches(testBadContent, /;(?!#)/) >= 1);
+});
+
+test('lint: test-bad.irule has brace-on-newline violation', function () {
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length - 1; i++) {
+    if (/^\s*\}\s*$/.test(lines[i]) && /^\s*(else|elseif)\b/.test(lines[i + 1])) { hits++; }
+  }
+  assert.ok(hits >= 1, 'expected brace-on-newline hit');
+});
+
+test('lint: test-bad.irule has missing-space-brace violation', function () {
+  assert.ok(countMatches(testBadContent, /\}\{/) >= 1);
+});
+
+test('lint: test-bad.irule has missing-priority violation', function () {
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i])) { continue; }
+    if (/\bwhen\s+[A-Z_]+\s*\{/.test(lines[i]) && !/\bpriority\s+\d+/.test(lines[i])) { hits++; }
+  }
+  assert.ok(hits >= 1, 'expected missing-priority hit');
+});
+
+test('lint: test-bad.irule has missing-option-terminator violation', function () {
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i])) { continue; }
+    if (/\bswitch\s/.test(lines[i]) && !/\bswitch\s+--/.test(lines[i]) && !/\bswitch\s+-\w/.test(lines[i])) { hits++; }
+  }
+  assert.ok(hits >= 1, 'expected missing-option-terminator hit');
+});
+
+test('lint: test-bad.irule has tab-character violation', function () {
+  assert.ok(countMatches(testBadContent, /\t/) >= 1);
+});
+
+test('lint: test-bad.irule has trailing-whitespace violation', function () {
+  assert.ok(countMatches(testBadContent, /\S\s+$/, { includeComments: true }) >= 1);
+});
+
+test('lint: test-bad.irule has line-too-long violation', function () {
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].length > 100) { hits++; }
+  }
+  assert.ok(hits >= 1, 'expected line-too-long hit');
+});
+
+test('lint: test-bad.irule has inline-comment violation', function () {
+  assert.ok(countMatches(testBadContent, /;#/) >= 1);
+});
+
+test('lint: test-bad.irule has comment-style violations', function () {
+  var tclCmds = 'set unset if else elseif for foreach while switch proc return break continue catch expr eval puts log append lappend lindex llength lsearch lsort lrange lreplace string regexp regsub scan format split join incr array global variable upvar uplevel namespace package rename info after clock open close read gets flush eof seek tell socket binary encoding subst list dict concat source load pool node snat snatpool table persist event call class findstr getfield whereis substr decode_uri b64decode b64encode hsl'.split(' ');
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    // Case 1: #word where word is NOT a known command (missing space on comment)
+    var m1 = lines[i].match(/^(\s*)#([a-zA-Z_]\w*)/);
+    if (m1 && tclCmds.indexOf(m1[2].toLowerCase()) === -1) { hits++; }
+    // Case 2: # word where word IS a known command (extra space on code)
+    var m2 = lines[i].match(/^(\s*)# ([a-zA-Z_]\w*)/);
+    if (m2 && tclCmds.indexOf(m2[2].toLowerCase()) !== -1) { hits++; }
+  }
+  assert.ok(hits >= 2, 'expected at least 2 comment-style hits, got ' + hits);
+});
+
+test('lint: test-bad.irule has truthy-non-binary violation', function () {
+  assert.ok(countMatches(testBadContent, /"(yes|no|true|false)"/i) >= 1);
+});
+
+test('lint: test-bad.irule has static-no-prefix violation', function () {
+  var lines = testBadContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i])) { continue; }
+    var re = /static::([a-zA-Z0-9_]+)/g;
+    var m;
+    while ((m = re.exec(lines[i])) !== null) {
+      if (m[1].indexOf('_') === -1) { hits++; }
+    }
+  }
+  assert.ok(hits >= 1, 'expected static-no-prefix hit');
+});
+
+test('lint: test-good.irule has no missing-priority violations', function () {
+  var lines = testGoodContent.split('\n');
+  var hits = 0;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i])) { continue; }
+    if (/\bwhen\s+[A-Z_]+\s*\{/.test(lines[i]) && !/\bpriority\s+\d+/.test(lines[i])) { hits++; }
+  }
+  assert.strictEqual(hits, 0, 'test-good should have no missing-priority hits');
+});
+
+test('lint: test-good.irule has no unbraced-var violations', function () {
+  var lines = testGoodContent.split('\n');
+  var hits = 0;
+  var re = /\$([a-zA-Z_][a-zA-Z0-9_:]*)/g;
+  for (var i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i])) { continue; }
+    re.lastIndex = 0;
+    var m;
+    while ((m = re.exec(lines[i])) !== null) {
+      if (lines[i].charAt(m.index + 1) === '{') { continue; }
+      hits++;
+    }
+  }
+  assert.strictEqual(hits, 0, 'test-good should have no unbraced-var hits');
+});
+
+// ---------------------------------------------------------------------------
 // Cleanup and summary
 // ---------------------------------------------------------------------------
 function rmrf(dir) {

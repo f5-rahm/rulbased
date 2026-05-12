@@ -362,6 +362,43 @@ div.CodeMirror-dragcursors {
 /* Help users use markselection to safely style text background */
 span.CodeMirror-selectedtext { background: none; }
 
+/* ---------------------------------------------------------------------------
+   CodeMirror lint addon styles (from addon/lint/lint.css, CM 5.65.17)
+-------------------------------------------------------------------------- */
+.CodeMirror-lint-markers {
+  width: 16px;
+}
+.CodeMirror-lint-tooltip {
+  background-color: #ffd;
+  border: 1px solid black;
+  border-radius: 4px 4px 4px 4px;
+  color: black;
+  font-family: monospace;
+  font-size: 10pt;
+  overflow: hidden;
+  padding: 2px 5px;
+  position: fixed;
+  white-space: pre-wrap;
+  max-width: 600px;
+  z-index: 100;
+  opacity: 0;
+  transition: opacity .4s;
+  -moz-transition: opacity .4s;
+  -webkit-transition: opacity .4s;
+  -o-transition: opacity .4s;
+  -ms-transition: opacity .4s;
+}
+/* Lint underline marks — simple border-bottom instead of background images */
+.CodeMirror-lint-mark-error {
+  border-bottom: 2px wavy #dc2626;
+}
+.CodeMirror-lint-mark-warning {
+  border-bottom: 2px wavy #d97706;
+}
+.CodeMirror-lint-mark-info {
+  border-bottom: 1px dashed #2563eb;
+}
+
   </style>
 
   <style>
@@ -1063,7 +1100,7 @@ span.CodeMirror-selectedtext { background: none; }
               <li><strong>Built-in audit log</strong> — append-only record of every deploy, rollback, snapshot, drift detection, import, and deletion</li>
             </ul>
             <div class="db-intro-meta">
-              <span class="db-version-pill">v2.1.0</span>
+              <span class="db-version-pill">v2.2.0</span>
             </div>
           </div>
 
@@ -1100,6 +1137,15 @@ span.CodeMirror-selectedtext { background: none; }
           <div class="db-card db-changelog">
             <div class="db-card-title">Changelog</div>
             <div class="db-cl-list">
+              <div class="db-cl-entry">
+                <div class="db-cl-ver">v2.2.0</div>
+                <ul class="db-cl-items">
+                  <li>TCL linter with 16 style-guide rules and per-rule configuration; three modes: strict, warn, off</li>
+                  <li>Pre-flight syntax validation via create-check-delete throwaway rule before deploy</li>
+                  <li>Tab/Shift-Tab indent/outdent (4-space, matching F5 iRules style guide)</li>
+                  <li>Built-in webhook test receiver for air-gapped demos with HMAC verification</li>
+                </ul>
+              </div>
               <div class="db-cl-entry">
                 <div class="db-cl-ver">v2.1.0</div>
                 <ul class="db-cl-items">
@@ -1219,9 +1265,10 @@ span.CodeMirror-selectedtext { background: none; }
           <label style="font-size:11px;font-weight:600;color:var(--text-sub)">Reason for change <span style="color:#dc2626">*</span></label>
           <textarea id="deploy-inline-reason" placeholder="e.g. CR-1234 -- Adding HSTS header per security review"></textarea>
           <div id="deploy-inline-btns">
+            <button id="btn-inline-validate" style="background:var(--bg);border:1px solid var(--border)">&#x2713; Validate</button>
             <button id="btn-inline-deploy" disabled style="background:var(--success);color:#fff">&#128190; Save &amp; Deploy</button>
             <button id="btn-inline-cancel" style="background:var(--bg);border:1px solid var(--border)">&#x2715; Cancel</button>
-            <span class="reason-hint">Required. Ctrl+Enter to deploy.</span>
+            <span class="reason-hint">Reason required. Ctrl+Enter to deploy.</span>
           </div>
         </div>
       </div>
@@ -1357,7 +1404,41 @@ span.CodeMirror-selectedtext { background: none; }
         </div>
         <div class="s-row" style="margin-top:10px">
           <label></label>
-          <button id="btn-test-webhook" style="font-size:12px;padding:4px 10px">Test Webhook</button>
+          <button id="btn-test-webhook" style="font-size:12px;padding:4px 10px">Send Test Webhook</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:2px">
+          Sends a real HTTP POST to the Webhook URL above. Save settings first if you changed the URL or secret.
+        </div>
+        <div style="margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:6px;background:var(--bg-alt,var(--bg))">
+          <div style="font-size:11px;font-weight:700;color:var(--text-sub,#666);margin-bottom:4px">
+            Preview Webhook Payload <span style="font-weight:400;color:var(--text-muted,#999)">(demo / debugging tool)</span>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted,#999);margin-bottom:8px">
+            Generates a sample webhook payload and verifies the HMAC signature
+            using the configured secret. No external request is made. Useful for
+            demos and for verifying your webhook secret is correct before
+            configuring an external receiver.
+          </div>
+          <button id="btn-capture-webhook" style="font-size:12px;padding:4px 10px">Preview Webhook Payload</button>
+          <div id="webhook-capture-result" style="display:none;margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="s-section">
+        <h3>Linting</h3>
+        <div class="s-row">
+          <label for="s-lintmode">Lint mode</label>
+          <select id="s-lintmode">
+            <option value="warn">Warn (default)</option>
+            <option value="strict">Strict (warnings block deploy)</option>
+            <option value="off">Off</option>
+          </select>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px">
+          Deploy always validates TCL syntax first (creates a throwaway rule, checks, deletes). Use the Validate button in the editor to check syntax without deploying.
+        </div>
+        <div style="margin-top:8px">
+          <div style="font-size:11px;font-weight:600;cursor:pointer" id="s-lint-rules-toggle">Per-rule toggles &#x25B6;</div>
+          <div id="s-lint-rules-wrap" style="display:none;margin-top:4px;max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px"></div>
         </div>
       </div>
       <div class="s-section">
@@ -2189,6 +2270,447 @@ function _attachIrulesFeatures(cm, isEditor) {
 }
 
 /* --------------------------------------------------------------------------
+   TCL Lint — 16 rules based on the F5 iRules Style Guide
+-------------------------------------------------------------------------- */
+var _lintRules = [];
+
+function _registerLintRule(id, severity, label, checkFn) {
+  _lintRules.push({ id: id, severity: severity, label: label, check: checkFn });
+}
+
+function _isRuleDisabled(ruleId) {
+  var cfg = (typeof S !== 'undefined' && S.settings && S.settings.lintRules) ? S.settings.lintRules : {};
+  return cfg[ruleId] === false;
+}
+
+function _isCommentLine(line) {
+  return /^\s*#/.test(line);
+}
+
+function _tclLinter(text) {
+  var found = [];
+  var mode = (typeof S !== 'undefined' && S.settings) ? (S.settings.lintMode || 'warn') : 'warn';
+  if (mode === 'off') { return found; }
+
+  var lines = text.split('\n');
+  for (var r = 0; r < _lintRules.length; r++) {
+    var rule = _lintRules[r];
+    if (_isRuleDisabled(rule.id)) { continue; }
+    for (var i = 0; i < lines.length; i++) {
+      var hits = rule.check(lines[i], i, lines);
+      for (var h = 0; h < hits.length; h++) {
+        found.push({
+          from: CodeMirror.Pos(i, hits[h].from || 0),
+          to: CodeMirror.Pos(i, hits[h].to || lines[i].length),
+          message: '[' + rule.id + '] ' + hits[h].message,
+          severity: (mode === 'strict' && rule.severity === 'warning') ? 'error' : rule.severity
+        });
+      }
+    }
+  }
+  return found;
+}
+
+/* Rule 1: unbraced-var — $foo instead of ${foo} */
+_registerLintRule('unbraced-var', 'warning', 'Unbraced variable', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var re = /\$([a-zA-Z_][a-zA-Z0-9_:]*)/g;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    var before = line.charAt(m.index + 1 - 1);  // char before $
+    // Check if this is already ${...}
+    if (line.charAt(m.index + 1) === '{') { continue; }
+    hits.push({
+      from: m.index,
+      to: m.index + m[0].length,
+      message: 'Wrap variable in braces: ${' + m[1] + '}'
+    });
+  }
+  return hits;
+});
+
+/* Rule 2: unbraced-expr — expr without braced argument */
+_registerLintRule('unbraced-expr', 'warning', 'Unbraced expr', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var re = /\bexpr\s+([^{])/g;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    hits.push({
+      from: m.index,
+      to: m.index + m[0].length,
+      message: 'Wrap expr argument in braces to avoid double expansion: expr {...}'
+    });
+  }
+  return hits;
+});
+
+/* Rule 3: f5-and-or — and/or instead of &&/|| */
+_registerLintRule('f5-and-or', 'warning', 'F5 and/or operators', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var re = /\b(and|or)\b/g;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    // Skip if inside a double-quoted string
+    var before = line.substring(0, m.index);
+    var dq = (before.match(/"/g) || []).length;
+    if (dq % 2 !== 0) { continue; }
+    var suggest = m[1] === 'and' ? '&&' : '||';
+    hits.push({
+      from: m.index,
+      to: m.index + m[0].length,
+      message: 'Use ' + suggest + ' instead of ' + m[1] + ' in expressions'
+    });
+  }
+  return hits;
+});
+
+/* Rule 4: oneline-if — if { ... } { ... } all on one line */
+_registerLintRule('oneline-if', 'warning', 'Single-line if', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  if (/\bif\s*\{[^}]*\}\s*\{[^}]*\}/.test(line)) {
+    hits.push({
+      from: line.indexOf('if'),
+      to: line.length,
+      message: 'Avoid single-line if statements; use multi-line form'
+    });
+  }
+  return hits;
+});
+
+/* Rule 5: multi-cmd-line — ; separating commands */
+_registerLintRule('multi-cmd-line', 'warning', 'Multiple commands on one line', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  // Match ; that is not part of ;# (inline comment)
+  var re = /;(?!#)/g;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    // Skip if inside a string (rough heuristic: count quotes before position)
+    var before = line.substring(0, m.index);
+    var dq = (before.match(/"/g) || []).length;
+    if (dq % 2 !== 0) { continue; }  // inside a double-quoted string
+    hits.push({
+      from: m.index,
+      to: m.index + 1,
+      message: 'Avoid multiple commands on one line; use separate lines'
+    });
+  }
+  return hits;
+});
+
+/* Rule 6: brace-on-newline — } else { placement */
+_registerLintRule('brace-on-newline', 'warning', 'Brace on new line', function(line, lineNo, allLines) {
+  var hits = [];
+  // Check if this line is just a closing brace and the next starts with else/elseif
+  if (/^\s*\}\s*$/.test(line) && lineNo + 1 < allLines.length) {
+    var next = allLines[lineNo + 1];
+    if (/^\s*(else|elseif)\b/.test(next)) {
+      hits.push({
+        from: 0,
+        to: line.length,
+        message: 'Place } else { on the same line, not on separate lines'
+      });
+    }
+  }
+  return hits;
+});
+
+/* Rule 7: missing-space-brace — }{ without space */
+_registerLintRule('missing-space-brace', 'warning', 'Missing space between braces', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var re = /\}\{/g;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    hits.push({
+      from: m.index,
+      to: m.index + 2,
+      message: 'Add a space between } and {'
+    });
+  }
+  return hits;
+});
+
+/* Rule 8: missing-priority — when EVENT { without priority */
+_registerLintRule('missing-priority', 'warning', 'Missing event priority', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  if (/\bwhen\s+[A-Z_]+\s*\{/.test(line) && !/\bpriority\s+\d+/.test(line)) {
+    var m = line.match(/\bwhen\s+([A-Z_]+)/);
+    hits.push({
+      from: line.indexOf('when'),
+      to: line.length,
+      message: 'Add explicit priority to event handler: when ' + (m ? m[1] : 'EVENT') + ' priority 500 {'
+    });
+  }
+  return hits;
+});
+
+/* Rule 9: missing-option-terminator — switch/table without -- */
+_registerLintRule('missing-option-terminator', 'warning', 'Missing -- terminator', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  // switch without --
+  if (/\bswitch\s/.test(line) && !/\bswitch\s+--/.test(line) && !/\bswitch\s+-\w/.test(line)) {
+    hits.push({
+      from: line.indexOf('switch'),
+      to: line.indexOf('switch') + 6,
+      message: 'Terminate switch options with -- to prevent argument injection'
+    });
+  }
+  // table commands without --
+  var tableRe = /\btable\s+(set|delete|lookup|add|replace|incr|append|keys|timeout)\s/;
+  if (tableRe.test(line) && !/\btable\s+\w+\s.*--/.test(line)) {
+    var tm = line.match(/\btable\s/);
+    if (tm) {
+      hits.push({
+        from: line.indexOf('table'),
+        to: line.indexOf('table') + 5,
+        message: 'Terminate table options with -- to prevent argument injection'
+      });
+    }
+  }
+  return hits;
+});
+
+/* Rule 10: tab-character — literal \t */
+_registerLintRule('tab-character', 'warning', 'Tab character', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var idx = line.indexOf('\t');
+  if (idx !== -1) {
+    hits.push({
+      from: idx,
+      to: idx + 1,
+      message: 'Use spaces instead of tab characters (indent 4 spaces)'
+    });
+  }
+  return hits;
+});
+
+/* Rule 11: trailing-whitespace — whitespace at end of line */
+_registerLintRule('trailing-whitespace', 'info', 'Trailing whitespace', function(line, lineNo) {
+  var hits = [];
+  var m = line.match(/(\s+)$/);
+  if (m && line.length > 0) {
+    hits.push({
+      from: line.length - m[1].length,
+      to: line.length,
+      message: 'Remove trailing whitespace'
+    });
+  }
+  return hits;
+});
+
+/* Rule 12: line-too-long — > 100 chars */
+_registerLintRule('line-too-long', 'info', 'Line too long', function(line, lineNo) {
+  var hits = [];
+  if (line.length > 100) {
+    hits.push({
+      from: 100,
+      to: line.length,
+      message: 'Line exceeds 100 characters (' + line.length + ')'
+    });
+  }
+  return hits;
+});
+
+/* Rule 13: inline-comment — ;# end-of-line comment */
+_registerLintRule('inline-comment', 'info', 'Inline comment', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var idx = line.indexOf(';#');
+  if (idx !== -1) {
+    hits.push({
+      from: idx,
+      to: line.length,
+      message: 'Avoid end-of-line comments; use a comment on its own line'
+    });
+  }
+  return hits;
+});
+
+/* Rule 14: comment-style — enforce # spacing per style guide:
+   #command  = correct (commented-out code, no space)
+   # comment = correct (real comment, space after #)
+   #comment  = wrong if not a command (missing space on a real comment)
+   # command = wrong (space present on commented-out code) */
+var _tclCommands = (
+  'set unset if else elseif for foreach while switch proc return break continue ' +
+  'catch expr eval puts log append lappend lindex llength lsearch lsort lrange ' +
+  'lreplace string regexp regsub scan format split join incr array global variable ' +
+  'upvar uplevel namespace package rename info after clock open close read gets ' +
+  'flush eof seek tell socket binary encoding subst list dict concat source load ' +
+  'pool node snat snatpool table persist event call class findstr getfield whereis ' +
+  'substr decode_uri b64decode b64encode hsl'
+).split(' ');
+_registerLintRule('comment-style', 'info', 'Comment style', function(line, lineNo) {
+  var hits = [];
+  // Case 1: #<word> with no space — check if word is NOT a known command
+  // If not a command, it's a real comment missing its space
+  var m1 = line.match(/^(\s*)#([a-zA-Z_]\w*)/);
+  if (m1 && _tclCommands.indexOf(m1[2].toLowerCase()) === -1) {
+    hits.push({
+      from: m1[1].length,
+      to: line.length,
+      message: 'Add a space after # for comments: # ' + m1[2]
+    });
+  }
+  // Case 2: # <word> with space — check if word IS a known command
+  // If it is a command, the space should be removed (commented-out code)
+  var m2 = line.match(/^(\s*)# ([a-zA-Z_]\w*)/);
+  if (m2 && _tclCommands.indexOf(m2[2].toLowerCase()) !== -1) {
+    hits.push({
+      from: m2[1].length,
+      to: line.length,
+      message: 'Remove space after # for commented-out code: #' + m2[2]
+    });
+  }
+  return hits;
+});
+
+/* Rule 15: truthy-non-binary — "yes"/"no"/"true"/"false" for state */
+_registerLintRule('truthy-non-binary', 'warning', 'Non-binary truthy value', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var re = /"(yes|no|true|false)"/gi;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    hits.push({
+      from: m.index,
+      to: m.index + m[0].length,
+      message: 'Use 0 or 1 for boolean state instead of "' + m[1] + '"'
+    });
+  }
+  return hits;
+});
+
+/* Rule 16: static-no-prefix — static::var without appname_ prefix */
+_registerLintRule('static-no-prefix', 'warning', 'Static variable without app prefix', function(line, lineNo) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  var re = /static::([a-zA-Z0-9_]+)/g;
+  var m;
+  while ((m = re.exec(line)) !== null) {
+    // Variable should contain _ to indicate appname_variable pattern
+    if (m[1].indexOf('_') === -1) {
+      hits.push({
+        from: m.index,
+        to: m.index + m[0].length,
+        message: 'Prefix static:: variables with app name: static::appname_' + m[1]
+      });
+    }
+  }
+  return hits;
+});
+
+/* --------------------------------------------------------------------------
+   Lint display engine — uses CM basic APIs (no lint addon required)
+-------------------------------------------------------------------------- */
+var _lintMarks = [];     // active TextMarker objects for underlines
+var _lintTimeout = null; // debounce timer
+
+function _attachLintHandler(cm) {
+  cm.on('change', function () {
+    if (_lintTimeout) { clearTimeout(_lintTimeout); }
+    _lintTimeout = setTimeout(function () { _runLint(cm); }, 400);
+  });
+}
+
+function _runLint(cm) {
+  // Clear previous markers
+  for (var i = 0; i < _lintMarks.length; i++) {
+    _lintMarks[i].clear();
+  }
+  _lintMarks = [];
+  cm.clearGutter('CodeMirror-lint-markers');
+
+  var text = cm.getValue();
+  if (!text) { return; }
+  var annotations = _tclLinter(text);
+  if (!annotations || annotations.length === 0) { return; }
+
+  // Group annotations by line for gutter markers
+  var byLine = {};
+  for (var a = 0; a < annotations.length; a++) {
+    var ann = annotations[a];
+    var lineNo = ann.from.line;
+    if (!byLine[lineNo]) { byLine[lineNo] = []; }
+    byLine[lineNo].push(ann);
+
+    // Underline the marked range
+    var cssClass = 'CodeMirror-lint-mark-' + (ann.severity || 'warning');
+    try {
+      var mark = cm.markText(ann.from, ann.to, { className: cssClass, title: ann.message });
+      _lintMarks.push(mark);
+    } catch (e) { /* skip invalid ranges */ }
+  }
+
+  // Set gutter markers
+  var lineNos = Object.keys(byLine);
+  for (var g = 0; g < lineNos.length; g++) {
+    var ln = parseInt(lineNos[g], 10);
+    var lineAnns = byLine[ln];
+    // Pick the worst severity for the gutter icon
+    var worst = 'info';
+    for (var w = 0; w < lineAnns.length; w++) {
+      if (lineAnns[w].severity === 'error') { worst = 'error'; break; }
+      if (lineAnns[w].severity === 'warning') { worst = 'warning'; }
+    }
+    var marker = _makeLintGutterMarker(worst, lineAnns);
+    cm.setGutterMarker(ln, 'CodeMirror-lint-markers', marker);
+  }
+}
+
+function _makeLintGutterMarker(severity, annotations) {
+  var el = document.createElement('div');
+  el.style.cursor = 'pointer';
+  el.style.fontSize = '14px';
+  el.style.lineHeight = '16px';
+  el.style.textAlign = 'center';
+  el.style.width = '16px';
+  if (severity === 'error') {
+    el.textContent = '\u2716';  // heavy X
+    el.style.color = '#dc2626';
+  } else if (severity === 'warning') {
+    el.textContent = '\u26A0';  // warning triangle
+    el.style.color = '#d97706';
+  } else {
+    el.textContent = '\u24D8';  // circled i
+    el.style.color = '#2563eb';
+  }
+  // Build tooltip text
+  var tips = [];
+  for (var i = 0; i < annotations.length; i++) {
+    tips.push(annotations[i].message);
+  }
+  var tipText = tips.join('\n');
+
+  // Tooltip on hover
+  var tooltip = null;
+  el.addEventListener('mouseenter', function (e) {
+    tooltip = document.createElement('div');
+    tooltip.className = 'CodeMirror-lint-tooltip';
+    tooltip.textContent = tipText;
+    tooltip.style.opacity = '1';
+    tooltip.style.left = (e.pageX + 10) + 'px';
+    tooltip.style.top = (e.pageY - 5) + 'px';
+    document.body.appendChild(tooltip);
+  });
+  el.addEventListener('mouseleave', function () {
+    if (tooltip && tooltip.parentNode) {
+      tooltip.parentNode.removeChild(tooltip);
+      tooltip = null;
+    }
+  });
+  return el;
+}
+
+/* --------------------------------------------------------------------------
    State
 -------------------------------------------------------------------------- */
 var S = {
@@ -2532,10 +3054,19 @@ function initEditor() {
   if (typeof CodeMirror === 'undefined') { setTimeout(initEditor, 100); return; }
   S.editor = CodeMirror.fromTextArea(document.getElementById('cm-editor'), {
     mode: 'tcl', lineNumbers: true, matchBrackets: true,
-    indentUnit: 2, tabSize: 2, indentWithTabs: false,
-    readOnly: true, theme: 'default', viewportMargin: Infinity
+    indentUnit: 4, tabSize: 4, indentWithTabs: false,
+    readOnly: true, theme: 'default', viewportMargin: Infinity,
+    gutters: ['CodeMirror-lint-markers', 'CodeMirror-linenumbers'],
+    extraKeys: {
+      'Tab': function(cm) {
+        if (cm.somethingSelected()) { cm.indentSelection('add'); }
+        else { cm.replaceSelection('    ', 'end'); }
+      },
+      'Shift-Tab': function(cm) { cm.indentSelection('subtract'); }
+    }
   });
   _attachIrulesFeatures(S.editor, true);
+  _attachLintHandler(S.editor);
 }
 
 function setEditorContent(content, editable) {
@@ -2544,6 +3075,7 @@ function setEditorContent(content, editable) {
   S.editor.setValue(content || '');
   S.editor.setOption('readOnly', !editable);
   S.editor.refresh();
+  _runLint(S.editor);
 }
 
 function setEditMode(on) {
@@ -3082,21 +3614,40 @@ function confirmDeploy() {
 
   // Inline editor path: content provided, deploy+snapshot in one POST
   if (p.editedContent) {
-    POST('/rules/' + rp(r) + '/snapshot',
-      { content: p.editedContent, message: reason, author: getAuthor() },
-      function (err, data) {
-        if (err || (data && data.ok === false)) {
-          btn.disabled = false;
-          btn.textContent = 'Save & Deploy';
-          _showDeployError((data && data.error) || err);
-          return;
-        }
-        var h = data.version && data.version.hash;
-        setEditMode(false);
-        closeDeployModal();
-        toast('success', 'Saved & deployed', r.fullPath + (h ? ' → ' + h : ''));
-        _refreshRuleAfterDeploy(r);
-      });
+    var partition = r.partition || 'Common';
+    // Check lint first (strict mode blocks on warnings)
+    var lintErr = _checkLintBlocking(p.editedContent);
+    if (lintErr) {
+      btn.disabled = false;
+      btn.textContent = 'Save & Deploy';
+      _showDeployError(lintErr);
+      return;
+    }
+    btn.innerHTML = '<span class="spinner"></span>Validating…';
+    _preflightValidate(partition, p.editedContent, function (preErr) {
+      if (preErr) {
+        btn.disabled = false;
+        btn.textContent = 'Save & Deploy';
+        _showDeployError(preErr);
+        return;
+      }
+      btn.innerHTML = '<span class="spinner"></span>Deploying…';
+      POST('/rules/' + rp(r) + '/snapshot',
+        { content: p.editedContent, message: reason, author: getAuthor() },
+        function (err, data) {
+          if (err || (data && data.ok === false)) {
+            btn.disabled = false;
+            btn.textContent = 'Save & Deploy';
+            _showDeployError((data && data.error) || err);
+            return;
+          }
+          var h = data.version && data.version.hash;
+          setEditMode(false);
+          closeDeployModal();
+          toast('success', 'Saved & deployed', r.fullPath + (h ? ' → ' + h : ''));
+          _refreshRuleAfterDeploy(r);
+        });
+    });
     return;
   }
 
@@ -3402,6 +3953,42 @@ function renderDashboardActivity(entries) {
 /* --------------------------------------------------------------------------
    Settings
 -------------------------------------------------------------------------- */
+function _populateLintRuleToggles(cfg) {
+  var wrap = document.getElementById('s-lint-rules-wrap');
+  wrap.innerHTML = '';
+  for (var i = 0; i < _lintRules.length; i++) {
+    var rule = _lintRules[i];
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;font-size:11px';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 's-lr-' + rule.id;
+    cb.checked = cfg[rule.id] !== false;
+    var lbl = document.createElement('label');
+    lbl.htmlFor = cb.id;
+    lbl.textContent = rule.id + ' (' + rule.severity + ') — ' + rule.label;
+    lbl.style.cursor = 'pointer';
+    row.appendChild(cb);
+    row.appendChild(lbl);
+    wrap.appendChild(row);
+  }
+}
+
+function _collectLintRuleToggles() {
+  var cfg = {};
+  for (var i = 0; i < _lintRules.length; i++) {
+    var el = document.getElementById('s-lr-' + _lintRules[i].id);
+    if (el && !el.checked) { cfg[_lintRules[i].id] = false; }
+  }
+  return cfg;
+}
+
+function _refreshLint() {
+  if (S.editor) {
+    _runLint(S.editor);
+  }
+}
+
 function openSettings() {
   GET('/settings', function (err, data) {
     if (!err && data) {
@@ -3414,6 +4001,8 @@ function openSettings() {
     document.getElementById('s-syslog').checked    = !!s.syslogEnabled;
     document.getElementById('s-webhook').value     = s.webhookUrl || '';
     document.getElementById('s-wsecret').value     = '';
+    document.getElementById('s-wsecret').placeholder = (s.webhookSecret && s.webhookSecret.length > 0)
+      ? '(secret saved — leave blank to keep)' : 'optional';
     document.getElementById('s-webhookdrift').checked = !!s.webhookOnDrift;
     document.getElementById('s-irulelinks').checked = !!s.iruleLinks;
     document.getElementById('s-tcllinks').checked  = !!s.tclManPageLinks;
@@ -3422,6 +4011,9 @@ function openSettings() {
     var theme = (s.theme === 'light' || s.theme === 'dark' || s.theme === 'auto') ? s.theme : 'auto';
     document.getElementById('s-theme').value = theme;
     document.getElementById('s-hidesys').checked   = (s.hideSystemRules !== false); // default true
+    // Phase 9: lint settings
+    document.getElementById('s-lintmode').value = s.lintMode || 'warn';
+    _populateLintRuleToggles(s.lintRules || {});
     document.getElementById('settings-overlay').style.display = 'block';
   });
 }
@@ -3446,6 +4038,67 @@ function testWebhook() {
       toast('error', 'Webhook test failed', (data && data.error) ? data.error : 'Unknown error');
     }
   });
+}
+
+/* --------------------------------------------------------------------------
+   Webhook test receiver — one-click capture (Phase 9.3)
+-------------------------------------------------------------------------- */
+function captureWebhook() {
+  var btn = document.getElementById('btn-capture-webhook');
+  var resultEl = document.getElementById('webhook-capture-result');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  resultEl.style.display = 'none';
+
+  GET('/settings/test-capture', function (err, data) {
+    btn.disabled = false;
+    btn.textContent = 'Preview Webhook Payload';
+
+    if (err) {
+      resultEl.innerHTML = '<div style="color:#dc2626;font-size:12px">Failed: ' + esc(String(err)) + '</div>';
+      resultEl.style.display = 'block';
+      return;
+    }
+    if (data && data.captured) {
+      _showWebhookCapture(resultEl, data.data);
+    } else {
+      resultEl.innerHTML = '<div style="color:#dc2626;font-size:12px">No payload generated.</div>';
+      resultEl.style.display = 'block';
+    }
+  });
+}
+
+function _showWebhookCapture(el, capture) {
+  var verifiedBanner = capture.signatureVerified
+    ? '<div style="color:#16a34a;font-weight:600;margin-bottom:4px">&#x2713; HMAC signature verified</div>'
+    : (capture.signatureHeader
+      ? '<div style="color:#dc2626;font-weight:600;margin-bottom:4px">&#x2717; HMAC signature mismatch</div>'
+      : '<div style="color:#a3a3a3;font-size:11px;margin-bottom:4px">No signature header present (set a webhook secret first)</div>');
+
+  var bodyJson = '';
+  try { bodyJson = JSON.stringify(capture.body, null, 2); }
+  catch (e) { bodyJson = String(capture.body); }
+
+  var headersHtml = '';
+  if (capture.headers && typeof capture.headers === 'object') {
+    var hkeys = Object.keys(capture.headers);
+    for (var i = 0; i < hkeys.length; i++) {
+      headersHtml += esc(hkeys[i]) + ': ' + esc(String(capture.headers[hkeys[i]])) + '\n';
+    }
+  }
+
+  el.innerHTML =
+    '<div style="font-size:12px">' +
+    '<div style="margin-bottom:4px"><strong>Received:</strong> ' + esc(capture.receivedAt) + '</div>' +
+    verifiedBanner +
+    '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--text-muted)">Headers</summary>' +
+    '<pre style="font-size:10px;background:var(--bg);border:1px solid var(--border);padding:6px;border-radius:4px;max-height:120px;overflow:auto;margin-top:4px">' +
+    (headersHtml || '(none)') + '</pre></details>' +
+    '<div style="margin-top:6px"><strong>Body:</strong></div>' +
+    '<pre style="font-size:10px;background:var(--bg);border:1px solid var(--border);padding:6px;border-radius:4px;max-height:200px;overflow:auto">' +
+    esc(bodyJson) + '</pre>' +
+    '</div>';
+  el.style.display = 'block';
 }
 
 /* --------------------------------------------------------------------------
@@ -3484,6 +4137,89 @@ function _clearDeployError() {
 /* --------------------------------------------------------------------------
    Inline deploy panel (below editor)
 -------------------------------------------------------------------------- */
+function _preflightValidate(partition, content, cb) {
+  POST('/rules/validate', { content: content, partition: partition }, function (err, data) {
+    if (S.settings && S.settings.debugMode) {
+      console.log('[iRV] preflight result: err=' + err + ' data=' + JSON.stringify(data));
+    }
+    if (err) {
+      return cb('Pre-flight validation unavailable: ' + err);
+    }
+    if (data && !data.ok) {
+      return cb(data.error);
+    }
+    cb(null);
+  });
+}
+
+/**
+ * Check lint annotations for blocking issues.
+ * In strict mode, warnings are promoted to errors and block.
+ * Info-level annotations never block.
+ * Returns an error message string if blocked, null if clear.
+ */
+function _checkLintBlocking(content) {
+  var mode = (S.settings && S.settings.lintMode) || 'warn';
+  if (mode === 'off') { return null; }
+  var annotations = _tclLinter(content);
+  if (!annotations || annotations.length === 0) { return null; }
+
+  // In strict mode, any warning-severity annotation blocks
+  if (mode === 'strict') {
+    var errors = [];
+    for (var i = 0; i < annotations.length; i++) {
+      // Original severity is warning (info never blocks)
+      if (annotations[i].severity === 'error') {
+        errors.push(annotations[i].message);
+      }
+    }
+    if (errors.length > 0) {
+      return 'Lint errors (' + errors.length + '):\n' + errors.join('\n');
+    }
+  }
+  return null;
+}
+
+function _executeInlineValidate() {
+  var r = S.rule;
+  if (!r || !S.editor) { return; }
+  var content = S.editor.getValue();
+  if (!content || !content.trim()) {
+    toast('warning', 'Empty content', 'Cannot validate an empty iRule.');
+    return;
+  }
+  var btn = document.getElementById('btn-inline-validate');
+  var errEl = document.getElementById('deploy-inline-error');
+  btn.disabled = true;
+  btn.textContent = 'Validating…';
+  errEl.style.display = 'none';
+
+  // Step 1: check lint
+  var lintErr = _checkLintBlocking(content);
+  if (lintErr) {
+    btn.disabled = false;
+    btn.textContent = '\u2713 Validate';
+    errEl.textContent = lintErr;
+    errEl.style.display = 'block';
+    toast('error', 'Lint check failed', 'Fix lint errors before deploying.');
+    return;
+  }
+
+  // Step 2: server-side TCL syntax check
+  var partition = r.partition || 'Common';
+  _preflightValidate(partition, content, function (err) {
+    btn.disabled = false;
+    btn.textContent = '\u2713 Validate';
+    if (err) {
+      errEl.textContent = _formatTclError(err);
+      errEl.style.display = 'block';
+      toast('error', 'Validation failed', 'TCL syntax error found.');
+    } else {
+      toast('success', 'Validation passed', 'Lint clean and TCL syntax valid.');
+    }
+  });
+}
+
 function _executeInlineDeploy() {
   var r = S.rule;
   if (!r || !S.editor) { return; }
@@ -3497,26 +4233,49 @@ function _executeInlineDeploy() {
   var btn   = document.getElementById('btn-inline-deploy');
   var errEl = document.getElementById('deploy-inline-error');
   btn.disabled = true;
-  btn.textContent = 'Deploying...';
+  btn.textContent = 'Validating...';
   errEl.style.display = 'none';
-  var wasNew = !r.inVersionStore && !r.onSystem;
-  POST('/rules/' + rp(r) + '/snapshot',
-    { content: content, message: reason, author: getAuthor() },
-    function (err, data) {
+
+  // Step 1: check lint (strict mode blocks on warnings)
+  var lintErr = _checkLintBlocking(content);
+  if (lintErr) {
+    btn.disabled = false;
+    btn.textContent = 'Save & Deploy';
+    errEl.textContent = lintErr;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  // Step 2: server-side TCL syntax check
+  var partition = r.partition || 'Common';
+  _preflightValidate(partition, content, function (preErr) {
+    if (preErr) {
       btn.disabled = false;
       btn.textContent = 'Save & Deploy';
-      if (err || (data && data.ok === false)) {
-        var msg = (data && data.error) || err;
-        errEl.textContent = _formatTclError(msg);
-        errEl.style.display = 'block';
-        return;
-      }
-      var h = data.version && data.version.hash;
-      setEditMode(false);
-      toast('success', 'Saved & deployed', r.fullPath + (h ? ' -> ' + h : ''));
-      if (wasNew) { PUT('/rules/' + rp(r) + '/acknowledge', {}, function () {}); }
-      _refreshRuleAfterDeploy(r);
-    });
+      errEl.textContent = _formatTclError(preErr);
+      errEl.style.display = 'block';
+      return;
+    }
+    btn.textContent = 'Deploying...';
+    var wasNew = !r.inVersionStore && !r.onSystem;
+    POST('/rules/' + rp(r) + '/snapshot',
+      { content: content, message: reason, author: getAuthor() },
+      function (err, data) {
+        btn.disabled = false;
+        btn.textContent = 'Save & Deploy';
+        if (err || (data && data.ok === false)) {
+          var msg = (data && data.error) || err;
+          errEl.textContent = _formatTclError(msg);
+          errEl.style.display = 'block';
+          return;
+        }
+        var h = data.version && data.version.hash;
+        setEditMode(false);
+        toast('success', 'Saved & deployed', r.fullPath + (h ? ' -> ' + h : ''));
+        if (wasNew) { PUT('/rules/' + rp(r) + '/acknowledge', {}, function () {}); }
+        _refreshRuleAfterDeploy(r);
+      });
+  }); // end _preflightValidate
 }
 
 /* --------------------------------------------------------------------------
@@ -3821,7 +4580,9 @@ function saveSettings() {
     tclManPageLinks:      document.getElementById('s-tcllinks').checked,
     debugMode:            document.getElementById('s-debug').checked,
     theme:                theme,
-    hideSystemRules:      nextHideSys
+    hideSystemRules:      nextHideSys,
+    lintMode:             document.getElementById('s-lintmode').value,
+    lintRules:            _collectLintRuleToggles()
   };
   var sec = document.getElementById('s-wsecret').value;
   if (sec) { p.webhookSecret = sec; }
@@ -3834,7 +4595,10 @@ function saveSettings() {
       S.settings.dashboardAuditLimit = p.dashboardAuditLimit;
       S.settings.theme               = p.theme;
       S.settings.hideSystemRules     = p.hideSystemRules;
+      S.settings.lintMode            = p.lintMode;
+      S.settings.lintRules           = p.lintRules;
       _applyEditorSettings();
+      _refreshLint();
       applyTheme();
       // If the hide-system toggle changed, the list must be re-fetched so the
       // server-side filter reflects the new preference.
@@ -4041,6 +4805,7 @@ document.addEventListener('DOMContentLoaded', function () {
     S.settings.theme = this.value;
     applyTheme();
   };
+  document.getElementById('btn-inline-validate').onclick = _executeInlineValidate;
   document.getElementById('btn-inline-deploy').onclick = _executeInlineDeploy;
   document.getElementById('btn-inline-cancel').onclick = function () { setEditMode(false); };
   document.getElementById('deploy-inline-reason').addEventListener('input', function () {
@@ -4051,6 +4816,13 @@ document.addEventListener('DOMContentLoaded', function () {
   });
   document.getElementById('btn-dconfirm').onclick = confirmDeploy;
   document.getElementById('btn-test-webhook').onclick = testWebhook;
+  document.getElementById('btn-capture-webhook').onclick = captureWebhook;
+  document.getElementById('s-lint-rules-toggle').onclick = function() {
+    var wrap = document.getElementById('s-lint-rules-wrap');
+    var open = wrap.style.display !== 'none';
+    wrap.style.display = open ? 'none' : 'block';
+    this.innerHTML = 'Per-rule toggles ' + (open ? '&#x25B6;' : '&#x25BC;');
+  };
   document.getElementById('settings-overlay').onclick = function (e) {
     if (e.target === this) { closeSettings(); }
   };

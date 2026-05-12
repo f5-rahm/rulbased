@@ -7,7 +7,7 @@ var bigipClient = require('./bigipClient');
 var logger = require('./logger');
 
 var WORKER_URI_PATH = 'shared/iapp/processors/rulbased';
-var VERSION = '2.1.0';
+var VERSION = '2.2.0';
 
 /**
  * iApps LX Config Processor

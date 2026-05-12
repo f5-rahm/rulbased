@@ -1,0 +1,63 @@
+# test-bad.irule — exactly one violation per lint rule (16 warnings expected)
+# Each violation is labeled with its rule ID in a comment above.
+
+# --- Rule: missing-priority ---
+when HTTP_REQUEST {
+
+    # --- Rule: unbraced-var ---
+    set host $host_value
+
+    # --- Rule: unbraced-expr ---
+    set result [expr 3 * 4]
+
+    # --- Rule: f5-and-or ---
+    if { ${flag1} and ${flag2} } {
+        log local0.info "both set"
+    }
+
+    # --- Rule: oneline-if ---
+    if { ${debug} } { log local0.debug "debug msg" }
+
+    # --- Rule: multi-cmd-line ---
+    set a 1; set b 2
+
+    # --- Rule: brace-on-newline ---
+    if { ${a} } {
+        log local0.info "a"
+    }
+    else {
+        log local0.info "not a"
+    }
+
+    # --- Rule: missing-space-brace ---
+    if { ${b} }{
+        log local0.info "b"
+    }
+
+    # --- Rule: missing-option-terminator ---
+    switch ${host} {
+        "foo" { pool foo_pool }
+    }
+
+    # --- Rule: tab-character ---
+	set tabbed 1
+
+    # --- Rule: trailing-whitespace ---
+    set trimme 1
+
+    # --- Rule: line-too-long ---
+    set very_long_variable_name_that_exceeds_one_hundred_characters_on_this_line_to_trigger_the_lint_rule "value_here_padding"
+
+    # --- Rule: inline-comment ---
+    set x 1 ;# this is an inline comment
+
+    # --- Rule: comment-style (two violations) ---
+    # set old_var "should have been removed"
+#thisisacomment not a command
+
+    # --- Rule: truthy-non-binary ---
+    set enabled "true"
+
+    # --- Rule: static-no-prefix ---
+    set static::debug 1
+}
