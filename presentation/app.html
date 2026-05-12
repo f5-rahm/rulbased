@@ -2534,7 +2534,11 @@ _registerLintRule('inline-comment', 'info', 'Inline comment', function(line, lin
   return hits;
 });
 
-/* Rule 14: commented-code — #<command> where command is a known TCL/iRules keyword */
+/* Rule 14: comment-style — enforce # spacing per style guide:
+   #command  = correct (commented-out code, no space)
+   # comment = correct (real comment, space after #)
+   #comment  = wrong if not a command (missing space on a real comment)
+   # command = wrong (space present on commented-out code) */
 var _tclCommands = (
   'set unset if else elseif for foreach while switch proc return break continue ' +
   'catch expr eval puts log append lappend lindex llength lsearch lsort lrange ' +
@@ -2544,14 +2548,26 @@ var _tclCommands = (
   'pool node snat snatpool table persist event call class findstr getfield whereis ' +
   'substr decode_uri b64decode b64encode hsl'
 ).split(' ');
-_registerLintRule('commented-code', 'info', 'Commented-out code', function(line, lineNo) {
+_registerLintRule('comment-style', 'info', 'Comment style', function(line, lineNo) {
   var hits = [];
-  var m = line.match(/^(\s*)#([a-zA-Z_]\w*)/);
-  if (m && _tclCommands.indexOf(m[2].toLowerCase()) !== -1) {
+  // Case 1: #<word> with no space — check if word is NOT a known command
+  // If not a command, it's a real comment missing its space
+  var m1 = line.match(/^(\s*)#([a-zA-Z_]\w*)/);
+  if (m1 && _tclCommands.indexOf(m1[2].toLowerCase()) === -1) {
     hits.push({
-      from: m[1].length,
+      from: m1[1].length,
       to: line.length,
-      message: 'Looks like commented-out code (#' + m[2] + '); remove or add a space for a real comment'
+      message: 'Add a space after # for comments: # ' + m1[2]
+    });
+  }
+  // Case 2: # <word> with space — check if word IS a known command
+  // If it is a command, the space should be removed (commented-out code)
+  var m2 = line.match(/^(\s*)# ([a-zA-Z_]\w*)/);
+  if (m2 && _tclCommands.indexOf(m2[2].toLowerCase()) !== -1) {
+    hits.push({
+      from: m2[1].length,
+      to: line.length,
+      message: 'Remove space after # for commented-out code: #' + m2[2]
     });
   }
   return hits;
