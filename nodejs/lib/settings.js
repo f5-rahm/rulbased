@@ -34,7 +34,6 @@ var _defaults = {
   hideSystemRules: true,
   theme: 'auto',
   lintMode: 'warn',
-  preflightValidation: 'optional',
   webhookReceiverEnabled: false,
   lintRules: {},
   schemaVersion: 0
@@ -66,12 +65,6 @@ function update(values) {
       var lm = values[k];
       if (lm !== 'strict' && lm !== 'warn' && lm !== 'off') {
         throw new Error('lintMode must be one of: strict, warn, off');
-      }
-    }
-    if (k === 'preflightValidation') {
-      var pv = values[k];
-      if (pv !== 'always' && pv !== 'optional' && pv !== 'required') {
-        throw new Error('preflightValidation must be one of: always, optional, required');
       }
     }
     _current[k] = values[k];

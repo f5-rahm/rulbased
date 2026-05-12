@@ -800,13 +800,19 @@ test('lint: test-bad.irule has inline-comment violation', function () {
   assert.ok(countMatches(testBadContent, /;#/) >= 1);
 });
 
-test('lint: test-bad.irule has commented-code violation', function () {
+test('lint: test-bad.irule has comment-style violations', function () {
+  var tclCmds = 'set unset if else elseif for foreach while switch proc return break continue catch expr eval puts log append lappend lindex llength lsearch lsort lrange lreplace string regexp regsub scan format split join incr array global variable upvar uplevel namespace package rename info after clock open close read gets flush eof seek tell socket binary encoding subst list dict concat source load pool node snat snatpool table persist event call class findstr getfield whereis substr decode_uri b64decode b64encode hsl'.split(' ');
   var lines = testBadContent.split('\n');
   var hits = 0;
   for (var i = 0; i < lines.length; i++) {
-    if (/^(\s*)#([^ \t\n#!])/.test(lines[i])) { hits++; }
+    // Case 1: #word where word is NOT a known command (missing space on comment)
+    var m1 = lines[i].match(/^(\s*)#([a-zA-Z_]\w*)/);
+    if (m1 && tclCmds.indexOf(m1[2].toLowerCase()) === -1) { hits++; }
+    // Case 2: # word where word IS a known command (extra space on code)
+    var m2 = lines[i].match(/^(\s*)# ([a-zA-Z_]\w*)/);
+    if (m2 && tclCmds.indexOf(m2[2].toLowerCase()) !== -1) { hits++; }
   }
-  assert.ok(hits >= 1, 'expected commented-code hit');
+  assert.ok(hits >= 2, 'expected at least 2 comment-style hits, got ' + hits);
 });
 
 test('lint: test-bad.irule has truthy-non-binary violation', function () {

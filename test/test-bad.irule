@@ -51,8 +51,9 @@ when HTTP_REQUEST {
     # --- Rule: inline-comment ---
     set x 1 ;# this is an inline comment
 
-    # --- Rule: commented-code ---
-#set old_var "should have been removed"
+    # --- Rule: comment-style (two violations) ---
+    # set old_var "should have been removed"
+#thisisacomment not a command
 
     # --- Rule: truthy-non-binary ---
     set enabled "true"

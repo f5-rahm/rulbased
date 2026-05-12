@@ -724,6 +724,87 @@ Events: `deploy`, `rollback`, `external-change-detected`, `test`.
 
 ---
 
+## TCL linter
+
+### Lint modes
+
+| Mode | Gutter markers | Blocks deploy? |
+|------|---------------|----------------|
+| **Warn** (default) | Amber triangles (warnings), blue circles (info) | No |
+| **Strict** | Red X's (warnings promoted to errors), blue circles (info) | Yes — warning-level violations block Validate and Deploy |
+| **Off** | None | No |
+
+Info-level annotations (trailing whitespace, line length, comment style) never
+block deploy regardless of mode.
+
+### Built-in rules
+
+| Rule ID | Severity | What it checks |
+|---------|----------|----------------|
+| `unbraced-var` | warning | `$foo` → suggest `${foo}` |
+| `unbraced-expr` | warning | `expr 3 * 4` → suggest `expr {3 * 4}` |
+| `f5-and-or` | warning | `and`/`or` in expressions → use `&&`/`\|\|` (skips strings) |
+| `oneline-if` | warning | `if { ... } { ... }` all on one line |
+| `multi-cmd-line` | warning | `;` separating commands on one line |
+| `brace-on-newline` | warning | `}` on its own line followed by `else`/`elseif` |
+| `missing-space-brace` | warning | `}{` without space |
+| `missing-priority` | warning | `when EVENT {` without `priority N` — suggests 500 |
+| `missing-option-terminator` | warning | `switch` or `table` commands without `--` |
+| `tab-character` | warning | Literal tab in non-comment content |
+| `trailing-whitespace` | info | Line ending in whitespace |
+| `line-too-long` | info | Line exceeds 100 characters |
+| `inline-comment` | info | `;#` end-of-line comment |
+| `comment-style` | info | `#word` where word is not a command (missing space), or `# command` where command is a known keyword (extra space) |
+| `truthy-non-binary` | warning | `"yes"`/`"no"`/`"true"`/`"false"` → use 0/1 |
+| `static-no-prefix` | warning | `static::var` without appname prefix (no underscore) |
+
+### Disabling individual rules
+
+Open **Settings → Linting → Per-rule toggles** and uncheck any rule you want
+to suppress. The setting is persisted in `settings.json` as the `lintRules`
+key, e.g.:
+
+```json
+{
+  "lintRules": {
+    "trailing-whitespace": false,
+    "line-too-long": false
+  }
+}
+```
+
+Only disabled rules need entries — all rules are enabled by default.
+
+### Adding a new lint rule
+
+Lint rules are defined in `presentation/app.html` in the "TCL Lint" section
+(search for `_registerLintRule`). Each rule follows this pattern:
+
+```javascript
+_registerLintRule('rule-id', 'warning', 'Human-readable label', function(line, lineNo, allLines) {
+  if (_isCommentLine(line)) { return []; }
+  var hits = [];
+  // Check the line content and push hits:
+  //   hits.push({ from: startCol, to: endCol, message: 'Explain the fix' });
+  return hits;
+});
+```
+
+Parameters of the check function:
+- `line` — the current line's text content
+- `lineNo` — zero-based line number
+- `allLines` — array of all lines (for multi-line checks like `brace-on-newline`)
+
+Each hit needs `from` (start column), `to` (end column), and `message`.
+Severity is `'warning'` (blocks in strict mode) or `'info'` (never blocks).
+Use `_isCommentLine(line)` to skip lines that start with `#`.
+
+After adding a rule, update `test/test-bad.irule` with a violation and
+`test/test-good.irule` with a clean example, then add a matching test in
+`test/unit.js`.
+
+---
+
 ## Version store layout
 
 ```
