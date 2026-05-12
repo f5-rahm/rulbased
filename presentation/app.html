@@ -2360,6 +2360,10 @@ _registerLintRule('f5-and-or', 'warning', 'F5 and/or operators', function(line, 
   var re = /\b(and|or)\b/g;
   var m;
   while ((m = re.exec(line)) !== null) {
+    // Skip if inside a double-quoted string
+    var before = line.substring(0, m.index);
+    var dq = (before.match(/"/g) || []).length;
+    if (dq % 2 !== 0) { continue; }
     var suggest = m[1] === 'and' ? '&&' : '||';
     hits.push({
       from: m.index,
