@@ -15,18 +15,20 @@ along the lines of:
 > I am building an iApps LX extension for BIG-IP called "Rülbased".
 > The attached PLANNING.md contains all spec decisions, data models, REST API
 > definitions, GUI specifications, and the current implementation status.
-> Phase 7 is complete (package rename irule-versioner → rulbased, validated
-> on BIG-IP TMOS 21.x). The next phase is Phase 8: five UX improvements
-> from early reviewer feedback — acknowledge-all button, hide F5 system
-> iRules (`_sys_*`), Versions tab (deduplicated by content hash), dark mode
-> (three-way Light/Dark/Auto), and a small set of polish items. Phase 9
-> is HA awareness (hybrid push-on-write + periodic reconciliation, modeled
-> on AS3's approach), and Phase 10 is final code review / security audit /
-> optimization. Please read the planning doc and help me continue with
-> Phase 8.
+> Phases 1–8.5 are complete and shipped at v2.1.0 (Phase 8 = UX improvements
+> v2.1.0; Phase 8.5 = in-place deploy-path repair + logger fix, no version
+> bump). The next phase is Phase 9: developer experience — Tab-key indent
+> in the CodeMirror editor, Layer-2 TCL static lint with create-check-delete
+> pre-flight validation, built-in webhook test receiver, and version-drift
+> cleanup. Phase 9 targets v2.2.0. Phase 10 is HA awareness (hybrid
+> push-on-write + periodic reconciliation, modeled on AS3's approach,
+> targeting v2.3.0), Phase 11 is final code review / security audit
+> (v2.4.0), and Phase 12 is optional GitHub integration. Please read the
+> planning doc and help me continue with Phase 9.
 
 Upload both this file and the latest phase source zip
-(`rulbased-phase7-final.zip`) to give the new session full context.
+(or the current `rulbased-phase-8.5-files.tar.gz`) to give the new session
+full context.
 
 ---
 
@@ -430,7 +432,7 @@ the existing BIG-IP admin session cookie — no separate credentials.
 | GET | `/settings` | 1 | Read all global settings (credentials masked) |
 | PUT | `/settings` | 1 | Update global settings |
 
-### GitHub worker (`/github`) — Phase 11 (optional)
+### GitHub worker (`/github`) — Phase 12 (optional)
 
 | Method | Path | Phase | Description |
 |--------|------|-------|-------------|
@@ -563,7 +565,7 @@ config processor via `fetch()` calls to `/mgmt/shared/rulbased/`.
   7. Success: toast notification + history list refreshes + "current" badge moves
   8. Failure: error modal with tmsh error message
 
-#### Right panel — GitHub tab (Phase 11 — optional)
+#### Right panel — GitHub tab (Phase 12 — optional)
 
 - Link status: Linked / Unlinked / Diverged
 - If unlinked: "Link to GitHub" flow with repo browser (file picker)
@@ -1350,7 +1352,8 @@ v2.1.0.
 **Origin:** The operator shared Rülbased with a handful of early reviewers
 after Phase 7 completed. These five items were the consolidated feedback.
 Items 1–4 are pure feature work; HA sync (originally item 5 in the feedback
-list) became its own phase (Phase 9) because the implementation scope is
+list) became its own phase (Phase 10, originally numbered Phase 9 before
+the Phase 9 DX work was inserted) because the implementation scope is
 substantial.
 
 #### Feature 1 — Acknowledge all
@@ -1475,7 +1478,7 @@ Rülbased open side-by-side.
   - Modal overlays and focus rings
 - Persistence: theme selection persists per-user via the settings REST
   endpoint. Since settings are device-local in Phase 8 (no HA sync yet),
-  users on an HA pair may need to set theme on both devices; Phase 9's
+  users on an HA pair may need to set theme on both devices; Phase 10's
   settings sync eliminates that
 
 #### Integration notes
@@ -1820,22 +1823,460 @@ build-rpm.sh doesn't stage `test/`.
 
 ---
 
-### Phase 9 — HA awareness for BIG-IP device clusters
+### Phase 9 — Developer experience: editor indent, lint, webhook self-test
+
+**Purpose:** three independent quality-of-life improvements for iRule
+authoring and demos, bundled as a single minor release. **Target version:
+v2.2.0** (current shipped: v2.1.0 after Phase 8 + 8.5 in-place).
+
+Phase 8.5 was a bugfix at v2.1.0 — Phase 9 is the first feature work
+since Phase 8, and is also the first release where we adopt a consistent
+versioning discipline (see "Version cleanup" sub-section below). The
+previous PLANNING.md had "Phase 9 — HA awareness" targeting v2.2.0 at
+this slot; HA has been renumbered to Phase 10 (now targeting v2.3.0),
+code review to Phase 11 (now v2.4.0), GitHub integration to Phase 12.
+The HA and code-review sections were untouched except for the phase
+number and the target-version line.
+
+Three sub-features plus a version-cleanup deliverable, each
+independently shippable. They could ship as 9a/9b/9c/9d if scope
+concerns emerge during implementation, but the intention is a single
+v2.2.0 patch.
+
+---
+
+#### Feature 9.1 — Tab-key indent/outdent in the CodeMirror editor
+
+**Problem:** in the current editor, `Tab` only indents the cursor's line.
+Multi-line selection + `Tab` does not bulk-indent the way it does in
+VS Code, IntelliJ, and most modern editors. Shift-Tab does nothing on a
+selection. iRule authors used to those keystrokes find it frustrating.
+
+**Resolution:** CodeMirror 5 ships `indentMore` / `indentLess` commands
+that bulk-indent the current selection by `indentUnit` (already set to 4
+in our config). Bind them to Tab and Shift-Tab via `extraKeys`:
+
+```javascript
+editor.setOption('extraKeys', {
+  'Tab':       function (cm) {
+    if (cm.somethingSelected()) {
+      cm.execCommand('indentMore');
+    } else {
+      // Single cursor: insert 4 spaces, matching indentUnit
+      cm.replaceSelection('    ', 'end');
+    }
+  },
+  'Shift-Tab': function (cm) { cm.execCommand('indentLess'); }
+});
+```
+
+Single-cursor Tab inserts 4 spaces (not a tab character) so the editor
+matches the style guide's "indent 4 spaces, no tab characters" rule.
+`indentWithTabs: false` is already set in our config — confirming via
+`grep indentWithTabs presentation/app.html` before implementation.
+
+**Accessibility consideration:** intercepting `Tab` breaks tab-out-of-
+editor for keyboard-only users. Standard fix: bind `Esc Tab` (and
+`Esc Shift-Tab`) to escape focus to the next focusable element. Adds
+two more entries to `extraKeys`. Worth a brief CSS focus-ring tweak on
+the Deploy button to make the escape destination visible.
+
+**Estimated effort:** ~30 lines of JS in `presentation/app.html`,
+plus 4–6 lines of CSS for the focus ring. Half a day including
+testing across the existing keyboard shortcut surface (Ctrl+S = save,
+etc.) to verify no collisions.
+
+---
+
+#### Feature 9.2 — TCL static lint + create-check-delete pre-flight validation
+
+**Problem:** the DevCentral iRules Style Guide encodes ~22 conventions
+that iRule authors should follow but don't always remember (wrap
+variables in `${...}`, terminate `switch` with `--`, never single-line
+`if`, place `{` at end-of-line, etc.). Currently the only feedback an
+author gets is "deploy succeeded" or "deploy failed with a TCL error" —
+no nudge toward the conventions, no syntax preview before committing.
+
+**Two-part resolution:**
+
+##### 9.2.a — Layer 2 tokenizer-based linter (client-side)
+
+A tokenizer walks the editor content and emits `{from, to, severity,
+message, ruleId}` markers. CodeMirror's `lint` addon renders them as
+gutter icons + tooltip-on-hover. The tokenizer reuses the existing
+iRules CodeMirror mode's lexer where possible (single source of truth
+for what's a comment, string, brace, etc.).
+
+**Rules in scope (mechanical / tokenizer-level):**
+
+| Rule ID         | Severity | What it checks |
+|-----------------|----------|----------------|
+| `unbraced-var`  | warning  | `$foo` outside string → suggest `${foo}` |
+| `unbraced-expr` | warning  | `expr 3 * 4` → suggest `expr {3 * 4}` |
+| `f5-and-or`     | warning  | `... and ...` / `... or ...` in expression → use `&&` / `\|\|` |
+| `oneline-if`    | warning  | `if { ... } { ... }` all on one line |
+| `multi-cmd-line`| warning  | `;` separating commands on one line |
+| `brace-on-newline` | warning | `else`, `elseif`, `} else {` placement |
+| `missing-priority` | warning | `when EVENT {` without `priority N` |
+| `missing-switch-terminator` | warning | `switch <expr> {` without `--` before `<expr>` |
+| `tab-character` | warning  | literal `\t` in non-comment content |
+| `trailing-whitespace` | info | line ending in whitespace before `\n` |
+| `line-too-long` | info     | line > 100 chars (configurable threshold) |
+| `inline-comment` | info    | `command ;# comment` end-of-line comments |
+| `commented-code` | info    | `# set foo bar` looks like commented-out code |
+| `truthy-non-binary` | warning | `set x "yes"` / `"no"` / `"true"` / `"false"` for state |
+| `static-no-prefix` | warning | `set static::foo 1` without app-name prefix |
+
+**Rules deferred (require semantic analysis — would need a Phase 9.5
+or future "scope-aware lint" effort):**
+
+- "Always put a timeout/lifetime on table contents" — requires
+  command-flow analysis of `table set` calls
+- "Avoid using `static::` for debug configurations" — requires
+  intent inference (static:: + "debug" in name is a fuzzy match)
+- "Don't leave commented-out code in the final version" — overlaps
+  with `commented-code` but only some `#` lines are former code
+- "Break out your iRules into functional blocks" — architectural,
+  no mechanical signal
+- "64KB single-iRule limit" — could be added as a simple `info`
+  rule (`buffer.length > 65536`) but distorts the lint focus toward
+  size budgeting
+- "Smart quotes / non-breaking spaces from MS Word" — already
+  flagged by browser-level normalization in most cases; could add
+  a `non-ascii-suspect` info rule if demand emerges
+
+**Rule configuration:** a JSON config in
+`/var/config/rest/iapps/rulbased/data/lint-rules.json` lets users
+disable individual rules without recompiling. Default config ships
+with everything enabled. UI surface for editing the config: Settings →
+Editor → Linting → individual rule toggles. Stretch: per-rule severity
+override (warn → info, info → off).
+
+**Lint trigger:** runs continuously as the user types (debounced
+~300ms), like flake8 in modern Python IDEs. Cheap because everything's
+client-side, in-process tokenization, no network round-trip.
+
+##### 9.2.b — Create-check-delete pre-flight syntax validation
+
+Layer 2 lint catches style violations but cannot guarantee tmsh would
+accept the content — it doesn't simulate the full TCL parser. To catch
+genuine syntax errors before committing the deploy, the GUI optionally
+runs a server-side pre-flight check.
+
+**Flow:**
+
+1. GUI sends `POST /mgmt/shared/rulbased/rules/validate` with
+   `{ partition, content }`
+2. Server picks a unique throwaway rule name:
+   `_rulbased_validate_<ts>_<rand>` (underscore prefix matches the F5
+   system-iRule convention so it's auto-filtered from the rule list
+   if it somehow survives cleanup)
+3. Server calls the existing `bigipClient.deployRule(partition,
+   throwawayName, content, ...)` — same merge-via-bash path as a
+   real deploy, in **the same partition as the target rule**
+4. **Always** issues a follow-up `DELETE
+   /mgmt/tm/ltm/rule/~<partition>~<throwawayName>` regardless of
+   whether the merge succeeded, with retry logic if the DELETE fails
+   (one retry, 1s backoff; if both fail, log severe and continue —
+   the throwaway name format makes orphans easy to spot)
+5. Returns `{ ok: bool, error: string|null, lintWarnings: [...] }`
+   to the GUI
+
+The GUI shows pre-flight failure as a blocking modal (same modal
+used for genuine deploy errors today, no UI new component). Success
+shows a subtle "✓ Syntax validated" line in the deploy progress
+toast — minimal noise on the happy path.
+
+**Cost:** roughly 300–500ms (one merge + one delete, no save). Lint
+warnings collected during the same validate call so the GUI has
+everything in one round-trip.
+
+##### Settings
+
+New Settings → Editor → Linting section:
+
+- **Lint mode** — `strict` / `warn` / `off` (default: `warn`)
+  - `strict`: any warning blocks deploy
+  - `warn`: warnings shown, deploy proceeds (user decides)
+  - `off`: linter disabled entirely (no gutter markers, no warnings,
+    no blocks)
+- **Pre-flight validation** — `always` / `optional` / `required`
+  (default: `optional`)
+  - `always`: pre-flight runs on every deploy
+  - `optional`: pre-flight runs only when the user clicks an extra
+    "Validate before deploy" checkbox in the deploy dialog (default
+    unchecked)
+  - `required`: deploy button stays disabled until pre-flight has
+    run and passed for the current content
+- **Per-rule toggles** — collapsible list of every lint rule with a
+  checkbox; saves to `lint-rules.json` automatically
+
+**Estimated effort:** Layer 2 tokenizer + 15 rules: ~3-4 days.
+Create-check-delete server endpoint: ~1 day (mostly reusing
+deployRule). Settings UI + persistence: ~1 day. Tests for both
+the lint rules and the validate endpoint: ~1 day. **Total: ~1
+working week.**
+
+##### Open implementation questions (decide during build, not now)
+
+- **Lint warnings on read-only views.** Decided: editor-only. Existing
+  rules in the Overview tab don't show warnings; F5 system iRules don't
+  trigger nag dialogs for content the user didn't write.
+- **Throwaway-rule cleanup on worker crash.** If the worker dies between
+  merge and delete, a `_rulbased_validate_*` rule will be orphaned. On
+  worker startup, scan `ltm rule` for the prefix and delete any older
+  than 10 minutes. Adds ~5 lines to `onStart` in rulesWorker.js.
+- **Pre-flight against a rule that already exists** (i.e. modifying an
+  existing iRule). Currently `tmsh load merge` is create-or-update, so
+  pre-flighting against a unique throwaway name is identical in effect
+  to pre-flighting against the real name. No special handling needed.
+- **Concurrent pre-flights from multiple operators.** The throwaway name
+  includes `<ts>_<rand>` so collisions are statistically impossible. No
+  in-memory lock needed.
+
+---
+
+#### Feature 9.3 — Built-in webhook test receiver
+
+**Problem:** the existing "Test webhook" button in Settings →
+Notifications fires against the configured `webhookUrl`. To verify
+the webhook actually works, the operator needs a receiver — typically
+hosted somewhere (webhook.site, smee.io) or a small local listener
+on a machine the BIG-IP can reach. For air-gapped lab demos, neither
+is convenient.
+
+**Resolution:** add an opt-in HTTP receiver endpoint inside the
+existing rulesWorker, plus GUI to display received requests.
+
+**Endpoints:**
+
+```
+POST /mgmt/shared/rulbased/webhook-test-receiver
+GET  /mgmt/shared/rulbased/webhook-test-receiver/last
+DELETE /mgmt/shared/rulbased/webhook-test-receiver/last
+```
+
+POST captures the request (headers, body, HMAC signature if present,
+arrival timestamp) into an in-memory single-slot ring buffer.
+Subsequent POSTs overwrite the previous capture — at most one request
+is retained. Old captures expire after 5 minutes (in-memory only, no
+disk write).
+
+GET returns the most recent capture, plus an `hmacVerified` field:
+the server recomputes the HMAC using the configured `webhookSecret`
+and reports whether it matches the `X-Hub-Signature-256` header that
+arrived. This lets the GUI display "✓ HMAC signature verified" right
+next to the payload, demonstrating the signing end-to-end.
+
+DELETE clears the captured request.
+
+**Security model:**
+
+- **Disabled by default.** Receiver is gated by
+  `settings.webhookReceiverEnabled` (default `false`). When disabled,
+  all three endpoints return 404 — they don't exist for the outside
+  world. The toggle is in Settings → Notifications → Test receiver.
+- **When enabled, requires no additional auth on POST.** Rationale: the
+  receiver only matters if it can be reached by the BIG-IP itself
+  (`http://localhost:8100/mgmt/shared/rulbased/webhook-test-receiver`),
+  and the management-plane network is the project's standing
+  trust boundary. Same reasoning as the trusted localhost:8100 channel
+  Rülbased uses for everything else.
+- **GET/DELETE are protected by the same iControl REST auth restnoded
+  already enforces** on every other Rülbased endpoint. No new auth
+  surface introduced.
+- **Five-minute expiry** prevents long-lived capture of sensitive
+  webhook content if someone forgets to disable the receiver after a
+  demo.
+- **No persistence to disk.** Captures live only in worker memory;
+  restnoded restart clears them. Cannot be exfiltrated via the version
+  store or audit log.
+
+**GUI changes:**
+
+- Settings → Notifications gets a new "Test receiver" subsection:
+  - **Enable receiver** toggle (default off)
+  - When enabled, displays the receiver URL the BIG-IP itself should
+    POST to: `http://localhost:8100/mgmt/shared/rulbased/webhook-test-receiver`
+  - **Use as webhook URL** button — one-click sets `webhookUrl` to
+    that loopback URL for the duration of the test
+- "Test webhook" button (already exists) gains a checkbox: **"Capture
+  with built-in receiver"**
+  - Checked: temporarily overrides `webhookUrl` for the test, fires
+    the webhook against the receiver, fetches the capture, displays
+    in a modal
+  - Unchecked: existing behavior (fires against the configured URL)
+- Modal display when "Capture" is checked: full payload pretty-printed,
+  HMAC verification status banner, headers in a collapsible section,
+  arrival timestamp + processing duration
+
+**Demo flow this enables:**
+
+1. Operator on an air-gapped lab BIG-IP opens Settings → Notifications
+2. Toggles **Enable receiver** on
+3. Clicks **Use as webhook URL** — `webhookUrl` is now the loopback
+   address
+4. Sets a `webhookSecret` for HMAC signing
+5. Clicks **Test webhook** with **Capture** checked
+6. Modal pops up showing the exact JSON payload that was sent, with
+   "✓ HMAC signature verified" banner
+7. Deploys an actual iRule — modal shows the deploy event payload
+   land too (with the operator's reason field, the toHash, etc.)
+8. Toggles receiver off when demo is done
+
+**Estimated effort:** receiver endpoint + in-memory store: ~1 day.
+GUI changes (settings panel, modal): ~1 day. Tests (unit tests for
+HMAC verify, integration test for capture/expire flow): ~half day.
+**Total: ~2.5 days.**
+
+##### Open implementation questions
+
+- **Auto-disable after N minutes of inactivity?** Could add a watchdog
+  that flips `webhookReceiverEnabled` back to `false` if no POST
+  arrives within 15 minutes. Probably overkill — the operator can
+  toggle it off manually, and the 5-minute capture expiry already
+  caps the data-at-rest window. Defer unless a real concern emerges.
+- **Multiple captures (history)?** No — single-slot ring is simpler
+  and fits the demo use case. Operators wanting persistent webhook
+  history should configure a real webhook destination.
+- **Receiver-only mode for non-Rülbased webhooks?** Could be useful
+  for debugging AS3 webhooks or other F5 LX extensions that emit
+  webhooks. Out of scope for Phase 9 but worth noting for future.
+
+---
+
+#### Feature 9.4 — Version-drift cleanup
+
+**Problem:** the codebase has accumulated version-string drift across
+Phases 1–8.5. Audit at the start of Phase 9 planning found:
+
+| Location                                          | Current value | Should be |
+|---------------------------------------------------|---------------|-----------|
+| `nodejs/lib/configProcessor.js` line 10           | `'2.1.0'`     | `'2.2.0'` |
+| `presentation/index.html` line 227 (widget badge) | `v2.0.0`      | `v2.2.0`  |
+| `presentation/app.html` line 1066 (header pill)   | `v2.1.0`      | `v2.2.0`  |
+| `presentation/app.html` line 1104 (dashboard pill)| `v2.1.0`      | `v2.2.0`  |
+| `build/build-rpm.sh` line 32 (default)            | `2.0.0`       | `2.2.0`   |
+| `build/install-rpm.sh` line 26-27 (comment)       | `2.0.0`       | `2.2.0`   |
+| README.md lines 296, 297, 306, 314, 379, 435, 442 (RPM filename examples) | `2.0.0-0001` | `2.2.0-0001` |
+
+**Intentionally NOT updated:**
+
+- `presentation/app.html` line 1113 (`v2.0.0` in a changelog entry) —
+  historical record of when v2.0.0 shipped, accurate as-is
+- README.md line 59 (`## Maintenance updates since 2.1.0`) — historical
+  context for the 8.5 fix, accurate as-is
+- README.md line 61 (`### Phase 8.5 — ... (in-place; still 2.1.0)`) —
+  historical record of when 8.5 shipped, accurate as-is
+- README.md line 196 (`### Phase 8 — UX improvements (v2.1)`) —
+  historical, accurate
+- All `2.0.0` / `2.1.0` references inside PLANNING.md describing
+  earlier-phase deliverables — historical, accurate
+
+**Resolution:** as part of the Phase 9 patch script, update all
+"current-version" references in one sweep. Add a new
+`app.html` changelog entry for v2.2.0 listing the three Phase 9 features.
+The version-cleanup edit lands in the same RPM as the feature work,
+keeping all version strings in sync from the first v2.2.0 release.
+
+**Build/release versioning rule (going forward, codified here so it
+doesn't drift again):**
+
+| Bump type           | Trigger                                       | Example                |
+|---------------------|-----------------------------------------------|------------------------|
+| Minor (`2.X.0`)     | A new phase ships with feature work           | Phase 10 → v2.3.0     |
+| Patch (`2.X.Y`)     | In-place fix between phases (no new features) | Hypothetical Phase 10.5 → v2.3.1 |
+| Within-phase patch  | Mid-phase iteration ships separately          | Phase 9 bugfix patch → v2.2.1 |
+
+Within-phase patches are optional — if a Phase 9 in-place fix is small
+enough to keep the version flat at v2.2.0 (the way Phase 8.5 stayed at
+v2.1.0 in-place), that's also acceptable, since the audit log + audit
+script entry below give us the trail without needing a version bump.
+
+**Version-drift audit script:**
+
+A new `build/check-versions.sh` (~30 lines bash) greps the codebase for
+all version strings, compares them against
+`configProcessor.VERSION`, and exits 1 on mismatch. Add it as the last
+step of every future patch script after `bigstart restart restnoded` so
+drift surfaces before the patch is declared successful. Also runnable
+standalone on a dev workstation as a pre-commit sanity check.
+
+```bash
+# build/check-versions.sh — usage
+$ bash build/check-versions.sh
+checking version consistency against configProcessor.VERSION = 2.2.0
+  presentation/index.html:227                          v2.2.0  ✓
+  presentation/app.html:1066                           v2.2.0  ✓
+  presentation/app.html:1104                           v2.2.0  ✓
+  build/build-rpm.sh:32                                2.2.0   ✓
+all version strings consistent
+```
+
+**Estimated effort:** ~1 hour for the file updates, ~1 hour for
+check-versions.sh + tests. Bundled with Phase 9 patch.
+
+---
+
+#### Phase 9 — As planned, things explicitly out of scope
+
+- iRule template library (clean-by-construction starting points for
+  common patterns: HTTP redirect, SNI routing, header injection,
+  rate-limit). Logical Phase 11 candidate once lint has shipped
+  and we've seen real usage patterns; would let templates be lint-
+  clean at creation.
+- Scope-aware lint (tracking `set` / `unset`, variable usage across
+  events, table-lifetime checks). Would need a real semantic
+  analyzer; defer indefinitely or fold into a future major version.
+- iRule formatting / auto-fix (a lint-fix mode that rewrites
+  violations). Different problem from detection; out of scope but a
+  natural follow-up.
+- LSP-style "go to definition" across multiple iRules. The F5 VS Code
+  extension is the right tool for that workflow; Rülbased's editor
+  is intentionally lighter-weight.
+- HA awareness across a device cluster. Originally numbered Phase 9
+  in PLANNING.md; now Phase 10. Sequencing: ship DX improvements first
+  because they help every user, then HA which helps a subset.
+
+#### Phase 9 — Lessons to apply from prior phases
+
+- **Sandbox-first patch script.** Phase 8.5 caught the "test/ dir
+  doesn't exist on-device" failure post-deploy. The Phase 9 patch
+  script will dry-run against `/tmp/sandbox/` and diff against the
+  build-machine source-of-truth before generating the real artifact.
+- **node --check on every modified .js before patch generation.**
+  Lesson from Phase 6.
+- **Sentinel collision check before heredoc heredoc generation.**
+  Lesson from Phase 6.
+- **`logger.info` / `logger.warning` / `logger.severe` / `logger.fine`
+  for all helper-module log lines.** Lesson from Phase 8.5.
+- **Decimal file modes, not `0o` literals.** Lesson from Phase 1.
+- **Match worker-style and helper-module logging vocabulary.** Lesson
+  from Phase 8.5.
+- **Version strings need a single source of truth and an automated
+  consistency check.** Lesson surfaced during Phase 9 planning when the
+  audit found `2.0.0` / `2.1.0` references in seven different places
+  out of sync with `configProcessor.VERSION`. Fixed in Phase 9 Feature
+  9.4; `build/check-versions.sh` enforces going forward.
+
+---
+
+### Phase 10 — HA awareness for BIG-IP device clusters
 
 **Purpose:** Rülbased on an HA pair (or larger DSC) should present a
 unified view of version history, audit log, and settings across devices,
-rather than each device being an isolated island. Target release: v2.2.0.
+rather than each device being an isolated island. Target release: v2.3.0.
 
-#### Phase 9 — Open decisions (resolve before coding starts)
+#### Phase 10 — Open decisions (resolve before coding starts)
 
 The design below captures the intended architecture, but five scoping
 decisions need operator input before the first patch lands. Each has
 meaningful tradeoffs and shouldn't be assumed away.
 
-1. **Phase 9 subdivision.** Phase 9 is substantially bigger than Phase 8
+1. **Phase 10 subdivision.** Phase 10 is substantially bigger than Phase 8
    (device discovery, new endpoints, cross-device HMAC, reconciliation
    loops, audit merge semantics). Break into 2–4 incremental patches
-   (9, 9b, 9c…) so each can be live-tested on a real HA pair before the
+   (10, 10b, 10c…) so each can be live-tested on a real HA pair before the
    next lands. Propose a breakdown with reasoning; operator picks.
 
 2. **HMAC shared secret — generation and storage.** The replication
@@ -1883,7 +2324,7 @@ the same storage location, the same exclusion). This means:
 - The iRule content itself DOES sync (that's ConfigSync's proper job and
   works fine) — only Rülbased's *metadata about* the iRule doesn't sync
 
-**Architecture decision (from Phase 9 planning):** Hybrid push-on-write +
+**Architecture decision (from Phase 10 planning):** Hybrid push-on-write +
 periodic reconciliation, modeled on how AS3 integrates with ConfigSync.
 
 #### How AS3 solves this (reference)
@@ -2017,7 +2458,7 @@ the same secret passed as an argument, OR the script uses iControl REST
 to exchange the secret between peers (operator provides admin creds for
 the peer during setup).
 
-A `rulbased-configure-ha` CLI tool (new in Phase 9) handles secret
+A `rulbased-configure-ha` CLI tool (new in Phase 10) handles secret
 rotation, peer list updates, and force-reconciliation from the command
 line for operators who want scripted HA management.
 
@@ -2043,7 +2484,7 @@ line for operators who want scripted HA management.
   payload
 - `post-install.sh --ha` mode for initial HA setup
 - README: new "HA deployment" section explaining the model and setup steps
-- `configProcessor.VERSION` → `2.2.0`
+- `configProcessor.VERSION` → `2.3.0`
 - Migration: the existing `migrations.js` gets a v2→v3 step that adds
   `device: <hostname>` and composite-key IDs to existing audit entries,
   and adds `lastModifiedByDevice` / `lastModifiedGeneration` to
@@ -2053,7 +2494,7 @@ line for operators who want scripted HA management.
   split-brain recovery, peer unreachable, HMAC rotation, large backfill
   (simulating a new device joining an existing HA pair)
 
-**Phase 9 risks to track:**
+**Phase 10 risks to track:**
 - HMAC secret distribution is a footgun similar to Phase 7's post-install
   step — operators will forget to run it on both devices, or get the
   secret out of sync. The setup CLI should detect mismatches loudly
@@ -2069,15 +2510,16 @@ line for operators who want scripted HA management.
 
 ---
 
-### Phase 10 — Code review, security audit, and cleanup
+### Phase 11 — Code review, security audit, and cleanup
 
 **Purpose:** Before declaring the codebase production-grade (target release
-v2.3.0), perform a systematic review to identify and resolve latent
-issues. Phase 10 is the final pre-production pass; it runs after Phase 8
-(UX features) and Phase 9 (HA awareness) are shipped and in use. The
-value of running this phase last is that the HA code from Phase 9 will
-itself need review, and Phase 10 can review the full codebase including
-both recent additions rather than chasing a moving target.
+v2.4.0), perform a systematic review to identify and resolve latent
+issues. Phase 11 is the final pre-production pass; it runs after Phase 8
+(UX features), Phase 9 (developer experience), and Phase 10 (HA awareness)
+are shipped and in use. The value of running this phase last is that the
+HA code from Phase 10 will itself need review, and Phase 11 can review
+the full codebase including both recent additions rather than chasing a
+moving target.
 
 **Review scope:**
 
@@ -2113,10 +2555,10 @@ both recent additions rather than chasing a moving target.
 
 **Deliverables:**
 - Annotated issue list with severity (blocker / should-fix / nice-to-have)
-- All blockers and should-fixes resolved before cutting v2.3.0 RPM
+- All blockers and should-fixes resolved before cutting v2.4.0 RPM
 - PLANNING.md updated with any new architectural decisions
 - README updated with any changed behaviour
-- `configProcessor.VERSION` → `2.3.0`; RPM version bump accordingly
+- `configProcessor.VERSION` → `2.4.0`; RPM version bump accordingly
 
 ---
 
@@ -2133,10 +2575,10 @@ mitigated" are resolved; the remainder are active considerations.
 | Poll worker stacking during failover | Already mitigated: single-flight `_running` boolean lock in `pollWorker.js` |
 | Large iRule content exceeding REST response buffer | iControl REST returns full `apiAnonymous` content in a single JSON response; BIG-IP enforces a 32MB response limit which is far above any realistic iRule size |
 | localhost:8100 trusted channel unavailable | Only occurs if restjavad is not running (system startup/failover). `bigipClient.js` surfaces a clear ECONNREFUSED error; the poll worker's single-flight lock prevents cascading failures |
-| GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI (Phase 11 — optional) |
-| Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution (Phase 11 — optional) |
+| GitHub PAT stored insecurely | Store as encrypted iApps LX block input property; never return in plain text via GET; mask in settings UI (Phase 12 — optional) |
+| Template variable injection | Sanitise variable values against `^[a-zA-Z0-9._\-/]+$` before substitution (Phase 12 — optional) |
 | CodeMirror bundle size | Inlined directly into `app.html` as `<script>`/`<style>` blocks (~187KB). No vendor file requests. CDN not used. `bundle-codemirror.sh` available if separate vendor files are needed for RPM size reasons. |
-| BIG-IP management plane has no outbound internet | GitHub integration (Phase 11 — optional) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
+| BIG-IP management plane has no outbound internet | GitHub integration (Phase 12 — optional) requires outbound HTTPS on port 443; document network requirement; all other features work fully offline |
 | Concurrent deploys to the same iRule | Already mitigated: per-rule deploy lock (`_deployLock` in-memory Map) in `rulesWorker.js` |
 
 ---
@@ -2156,13 +2598,13 @@ rulbased/
 │       ├── rulesWorker.js         ← REST: /rules (Phase 1+2) ✅
 │       ├── settingsWorker.js      ← REST: /settings + /settings/test-* ✅
 │       ├── uiWorker.js            ← REST: /ui static file server (Phase 2) ✅
-│       ├── githubWorker.js        ← REST: /github (Phase 11 — optional)
+│       ├── githubWorker.js        ← REST: /github (Phase 12 — optional)
 │       ├── bigipClient.js         ← iControl REST reads+writes via localhost:8100 ✅
 │       ├── notifier.js            ← syslog + webhook notifications (Phase 5) ✅
 │       ├── tmsh.js                ← tmsh child process wrapper ✅
 │       ├── versionStore.js        ← filesystem version store ✅
 │       ├── pollWorker.js          ← scheduled change detection ✅
-│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 11 — optional)
+│       ├── githubClient.js        ← GitHub API v3 HTTP client (Phase 12 — optional)
 │       ├── settings.js            ← in-memory settings + persistence ✅
 │       ├── blockUtil.js           ← iApps LX state transition helpers ✅
 │       ├── logger.js              ← restnoded logger wrapper ✅
@@ -2209,11 +2651,11 @@ Files marked ✅ are complete. All others are planned for the phase indicated.
 - **GitHub App private key storage:** PEM keys are multi-line and don't store
   cleanly in a single iApps LX block property. Options: (a) store as a single
   `\n`-escaped string; (b) write to a separate file in the data directory and
-  store only the path in settings. Decision deferred to Phase 11 (optional).
+  store only the path in settings. Decision deferred to Phase 12 (optional).
 
 ---
 
-### Phase 11 — GitHub integration (optional — scope and security TBD)
+### Phase 12 — GitHub integration (optional — scope and security TBD)
 
 **Status: deferred.** This phase is held pending a clearer understanding of the
 network security requirements and credential storage model. The full design
